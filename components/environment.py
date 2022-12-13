@@ -12,7 +12,7 @@ import gc
 from matplotlib import pyplot as plt
 
 MODEL_RES = 64
-ZOOM_DEPTH = 3
+ZOOM_DEPTH = 4
 
 
 class PriorityQueue(object):
@@ -189,6 +189,13 @@ class Environment:
         self.current_node.V = V
         return A
 
+    def calc_conventional_policy_step(self, x, y):
+        pad = 2 ** (self.min_zoom - 1)
+        nb_line = self.W / pad
+        nb_col = int(x / pad)
+        last = int(y / pad)
+        self.conventional_policy_nb_step = nb_line * nb_col + last + 1
+
     def sub_img_contain_object(self, x, y, z):
         """
         This method allow the user to know if the current subgrid contain charlie or not
@@ -196,7 +203,6 @@ class Environment:
         """
 
         for bbox in self.bboxes:
-
             bb_x, bb_y, bb_w, bb_h = bbox
             window = self.zoom_padding << (z - 1)
             bb_w /= 2
@@ -207,6 +213,7 @@ class Environment:
                 and
                 (y * window <= bb_y < y * window + window - bb_h or
                  y * window <= bb_y + bb_h < y * window + window)):
+                self.calc_conventional_policy_step(bb_x, bb_y)
                 return True
         return False
 

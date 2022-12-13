@@ -110,6 +110,12 @@ class PolicyGradient:
         self.TDE_pa_batch = None
         self.G_pa_batch = None
 
+    def save(self, file):
+        torch.save(self.policy.state_dict(), file)
+
+    def load(self, weights):
+        self.policy.load_state_dict(torch.load(weights))
+
     def minmax_scaling(self, x):
         return (x - self.min_r) / (self.max_r - self.min_r)
 
@@ -292,65 +298,41 @@ class PolicyGradient:
         # ------------------------------------------------------------------------------------------------------
         loss = self.update_policy(batch)
 
-        return loss, sum_reward, sum_v, torch.sum(TDE_batch).item()
+        return loss, sum_reward, sum_v, torch.mean(TDE_batch).item()
 
-    def exploit(self):
+    def exploit_one_episode(self, S):
+        sum_reward = 0
+        sum_V = 0
 
-        rewards = []
-        nb_action = []
-        good_choices = []
-        bad_choices = []
-        conv_policy = []
-        time_by_episode = []
-        nb_effective_action = []
+        existing_proba = None
+        existing_v = None
+        start_time = time.time()
+        while True:
+            # State preprocess
+            S = torch.from_numpy(S).float()
+            S = S.unsqueeze(0).to(self.policy.device)
+            S = self.policy.prepare_data(S)
 
-        with tqdm(range(self.val_episode), unit="episode") as episode:
-            for i in episode:
-                sum_episode_reward = 0
-                S = self.environment.reload_env()
-                existing_proba = None
-                existing_v = None
-                start_time = time.time()
-                while True:
-                    # State preprocess
-                    S = torch.from_numpy(S).float()
-                    S = S.unsqueeze(0).to(self.policy.device)
-                    S = self.policy.prepare_data(S)
+            if existing_proba is None:
+                with torch.no_grad():
+                    probs, V = self.policy(S)
+                    probs = torch.nn.functional.softmax(probs, dim=-1)
+                    probs = probs.detach().cpu().numpy()[0]
+                    V = V.item()
+            else:
+                probs = existing_proba
+                V = existing_v
 
-                    if existing_proba is None:
-                        with torch.no_grad():
-                            probs, V = self.policy(S)
-                            probs = torch.nn.functional.softmax(probs, dim=-1)
-                            probs = probs.detach().cpu().numpy()[0]
-                            V = V.item()
-                    else:
-                        probs = existing_proba
-                        V = existing_v
+            # no need to explore, so we select the most probable action
+            probs /= probs.sum()
+            A = self.environment.exploit(probs, V)
+            S_prime, R, is_terminal, _, existing_pred = self.environment.take_action(A)
+            existing_proba, existing_v = existing_pred
 
-                    # no need to explore, so we select the most probable action
-                    probs /= probs.sum()
-                    A = self.environment.exploit(probs, V)
-                    S_prime, R, is_terminal, _, existing_pred = self.environment.take_action(A)
+            S = S_prime
+            sum_reward += R
+            sum_V += V
+            if is_terminal:
+                break
 
-                    existing_proba, existing_v = existing_pred
-
-                    S = S_prime
-                    sum_episode_reward += R
-                    if is_terminal:
-                        break
-                done_time = time.time()
-                rewards.append(sum_episode_reward)
-                conv_policy.append(self.environment.conventional_policy_nb_step)
-                st = self.environment.nb_actions_taken
-                gt = self.environment.nb_good_choice
-                bt = self.environment.nb_bad_choice
-                mz = self.environment.nb_max_zoom
-                nb_action.append(st)
-                nb_effective_action.append(mz)
-                time_by_episode.append(done_time - start_time)
-                good_choices.append(gt / (gt + bt + 0.00001))
-                bad_choices.append(bt / (gt + bt + 0.00001))
-
-                episode.set_postfix(rewards=rewards[-1], nb_action=st)
-
-        return rewards, nb_action, good_choices, bad_choices, conv_policy, time_by_episode, nb_effective_action
+        return sum_reward, sum_V
