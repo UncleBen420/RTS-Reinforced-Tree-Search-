@@ -12,6 +12,7 @@ import gc
 from matplotlib import pyplot as plt
 
 MODEL_RES = 64
+TASK_MODEL_RES = 100
 ZOOM_DEPTH = 4
 
 
@@ -47,30 +48,28 @@ class PriorityQueue(object):
 
 class Tree:
     def __init__(self, img, pos, parent, number):
-        x, y, z = pos
+        x, y = pos
         self.number = number
-        self.childs = []
+        self.children = []
         self.parent = parent
         self.visited = False
         self.img = img
         self.resized_img = cv2.resize(img, (MODEL_RES, MODEL_RES)) / 255.
         self.x = x
         self.y = y
-        self.z = z
         self.proba = None
         self.V = None
-        self.nb_childs = 0
+        self.nb_children = 0
 
     def get_state(self):
         return np.array(self.resized_img.squeeze())
 
+    def image_limit_attain(self):
+        return self.img.shape[0] / 2 <= TASK_MODEL_RES
+
     def get_child(self, action, number):
 
-        self.nb_childs += 1
-
-        sub_z = self.z - 1
-        sub_x = self.x << 1
-        sub_y = self.y << 1
+        self.nb_children += 1
 
         h = int(self.img.shape[0] / 2)
         w = int(self.img.shape[1] / 2)
@@ -88,10 +87,10 @@ class Tree:
             i = 1
             j = 1
 
-        x_ = sub_x + i
-        y_ = sub_y + j
+        x_ = self.x + (i * w)
+        y_ = self.y + (j * h)
 
-        return Tree(self.img[h * j:h + h * j, w * i: w + w * i], (x_, y_, sub_z), self.number, number)
+        return Tree(self.img[h * j:h + h * j, w * i: w + w * i], (x_, y_), self.number, number)
 
 
 def check_cuda():
@@ -111,20 +110,19 @@ class Environment:
     """
 
     def __init__(self):
-        self.min_zoom = None
-        self.max_zoom = None
+        self.min_res = None
+        self.min_zoom_action = None
+        self.objects_coordinates = None
+        self.nb_max_conv_action = None
         self.full_img = None
-        self.H = None
-        self.W = None
+        self.dim = None
         self.pq = None
         self.sub_images_queue = None
         self.current_node = None
         self.Queue = None
         self.conventional_policy_nb_step = None
-        self.root = None
         self.base_img = None
         self.nb_actions_taken = 0
-        self.zoom_padding = 2
         self.action_space = 4
         self.cv_cuda = check_cuda()
 
@@ -134,43 +132,46 @@ class Environment:
         value to the starting point.
         :return: the current state of the environment.
         """
-        self.bboxes = []
+        self.objects_coordinates = []
         self.prepare_img(img)
-        self.prepare_bounding_boxes(bb)
+        self.prepare_coordinates(bb)
 
         self.pq = PriorityQueue()
         self.nb_actions_taken = 0
-        self.current_node = Tree(self.full_img, (0, 0, self.max_zoom), -1, self.nb_actions_taken)
+        self.min_zoom_action = 0
+        self.current_node = Tree(self.full_img, (0, 0), -1, self.nb_actions_taken)
 
         return self.current_node.get_state()
 
     def prepare_img(self, img):
         self.full_img = cv2.cvtColor(cv2.imread(img), cv2.COLOR_BGR2RGB)
-        self.H, self.W, self.channels = self.full_img.shape
+        H, W, channels = self.full_img.shape
         # check which dimention is the bigger
-        max_ = np.max([self.W, self.H])
+        max_ = np.max([W, H])
         # check that the image is divisble by 2
-        self.max_zoom = int(math.log(max_, 2))
-        if 2 ** self.max_zoom < max_:
-            self.max_zoom += 1
-            max_ = 2 ** self.max_zoom
+        if max_ % 2:
+            max_ += 1
 
-        self.full_img = cv2.copyMakeBorder(self.full_img, 0, max_ - self.H, 0,
-                                           max_ - self.W, cv2.BORDER_CONSTANT, None, value=0)
+        self.full_img = cv2.copyMakeBorder(self.full_img, 0, max_ - H, 0,
+                                           max_ - W, cv2.BORDER_CONSTANT, None, value=0)
 
-        self.W = max_
-        self.H = max_
+        self.dim = max_
+        self.min_res = self.dim
+        while True:
+            if self.min_res / 2 <= TASK_MODEL_RES:
+                break
+            else:
+                self.min_res /= 2
 
-        self.max_zoom = int(math.log(self.W, 2))
-        self.min_zoom = self.max_zoom - ZOOM_DEPTH
+        self.nb_max_conv_action = (self.dim / self.min_res) ** 2
 
-    def prepare_bounding_boxes(self, bb):
+    def prepare_coordinates(self, bb):
         bb_file = open(bb, 'r')
         lines = bb_file.readlines()
         for line in lines:
             if line is not None:
-                x, y, w, h = line.split()
-                self.bboxes.append((float(x), float(y), float(w), float(h)))
+                values = line.split()
+                self.objects_coordinates.append((float(values[0]), float(values[1])))
 
     def follow_policy(self, probs, V):
         A = np.random.choice(self.action_space, p=probs)
@@ -190,30 +191,23 @@ class Environment:
         return A
 
     def calc_conventional_policy_step(self, x, y):
-        pad = 2 ** (self.min_zoom - 1)
-        nb_line = self.W / pad
-        nb_col = int(x / pad)
-        last = int(y / pad)
+
+        nb_line = self.dim / self.min_res
+        nb_col = int(x / self.min_res)
+        last = int(y / self.min_res)
         self.conventional_policy_nb_step = nb_line * nb_col + last + 1
 
-    def sub_img_contain_object(self, x, y, z):
+    def sub_img_contain_object(self, x, y, window):
         """
         This method allow the user to know if the current subgrid contain charlie or not
         :return: true if the sub grid contains charlie.
         """
 
-        for bbox in self.bboxes:
-            bb_x, bb_y, bb_w, bb_h = bbox
-            window = self.zoom_padding << (z - 1)
-            bb_w /= 2
-            bb_h /= 2
+        for coordinate in self.objects_coordinates:
+            o_x, o_y = coordinate
 
-            if ((x * window <= bb_x < x * window + window - bb_w or
-                 x * window <= bb_x + bb_w < x * window + window)
-                and
-                (y * window <= bb_y < y * window + window - bb_h or
-                 y * window <= bb_y + bb_h < y * window + window)):
-                self.calc_conventional_policy_step(bb_x, bb_y)
+            if x <= o_x <= x + window and y <= o_y <= y + window:
+                self.calc_conventional_policy_step(o_x, o_y)
                 return True
         return False
 
@@ -230,25 +224,29 @@ class Environment:
 
         node_info = (parent_n, current_n, self.nb_actions_taken)
 
-        if self.current_node.nb_childs < 4:
+        if self.current_node.nb_children < 4:
             self.pq.append(self.current_node, self.current_node.V)
 
-        if not self.current_node.z <= self.min_zoom:
+        if not child.image_limit_attain():
             self.pq.append(child, self.current_node.V)
+
+        if self.current_node.nb_children >= 4:
+            del self.current_node
 
         if self.pq.isEmpty():
             is_terminal = True
 
-        x = child.x
-        y = child.y
-        z = child.z
+        if child.image_limit_attain():
 
-        if z < self.min_zoom and self.sub_img_contain_object(x, y, z):
-            reward = 100.
-            is_terminal = True
+            self.min_zoom_action += 1
+            if self.sub_img_contain_object(child.x, child.y, child.img.shape[0]):
+                reward = 30.
+                is_terminal = True
 
-        if not self.pq.isEmpty():
-            self.current_node = self.pq.pop()
+        if self.pq.isEmpty():
+            raise Exception("No object has been found by the agent. Check if the coordinate are correct")
+
+        self.current_node = self.pq.pop()
 
         S_prime = self.current_node.get_state()
 

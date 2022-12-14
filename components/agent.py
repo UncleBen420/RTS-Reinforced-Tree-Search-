@@ -12,8 +12,6 @@ class PolicyNet(nn.Module):
 
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-        print("RUNNING ON {0}".format(self.device))
-
         self.action_space = np.arange(4)
 
         self.img_res = img_res
@@ -84,14 +82,13 @@ class PolicyNet(nn.Module):
 class PolicyGradient:
 
     def __init__(self, environment, learning_rate=0.0001,
-                 episodes=100, val_episode=100, gamma=0.3,
-                 entropy_coef=0.01, beta_coef=0.05,
-                 lr_gamma=0.5, batch_size=64, pa_dataset_size=100, img_res=64):
+                 episodes=100, gamma=0.7,
+                 entropy_coef=0.1, beta_coef=0.01,
+                 lr_gamma=0.9, batch_size=64, pa_dataset_size=256, pa_batch_size=64, img_res=64):
 
         self.gamma = gamma
         self.environment = environment
         self.episodes = episodes
-        self.val_episode = val_episode
         self.beta_coef = beta_coef
         self.entropy_coef = entropy_coef
         self.min_r = 0
@@ -100,9 +97,9 @@ class PolicyGradient:
         self.action_space = 4
         self.batch_size = batch_size
         self.pa_dataset_size = pa_dataset_size
-        print(self.policy)
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=learning_rate)
         self.scheduler = StepLR(self.optimizer, step_size=100, gamma=lr_gamma)
+        self.pa_batch_size = pa_batch_size
 
         # Past Actions Buffer
         self.S_pa_batch = None
@@ -115,6 +112,11 @@ class PolicyGradient:
 
     def load(self, weights):
         self.policy.load_state_dict(torch.load(weights))
+
+    def model_summary(self):
+        print("RUNNING ON {0}".format(self.policy.device))
+        print(self.policy)
+        print("TOTAL PARAMS: {0}".format(sum(p.numel() for p in self.policy.parameters())))
 
     def minmax_scaling(self, x):
         return (x - self.min_r) / (self.max_r - self.min_r)
@@ -239,7 +241,6 @@ class PolicyGradient:
         # ------------------------------------------------------------------------------------------------------
         # BATCH PREPARATION
         # ------------------------------------------------------------------------------------------------------
-        weights = TDE_batch
         S_batch = torch.concat(S_batch).to(self.policy.device)
         A_batch = torch.LongTensor(A_batch).to(self.policy.device)
         G_batch = torch.FloatTensor(G_batch).to(self.policy.device)
@@ -255,16 +256,17 @@ class PolicyGradient:
         # PAST ACTION DATASET PREPARATION
         # ------------------------------------------------------------------------------------------------------
         # Append the past action batch to the current batch if possible
-        if self.A_pa_batch is not None and len(self.A_pa_batch) > 0:
-            batch = (torch.cat((self.S_pa_batch, S_batch), 0),
-                     torch.cat((self.A_pa_batch, A_batch), 0),
-                     torch.cat((self.G_pa_batch, G_batch), 0),
-                     torch.cat((self.TDE_pa_batch, TDE_batch), 0))
+
+        if self.A_pa_batch is not None and len(self.A_pa_batch) > self.pa_batch_size:
+            batch = (torch.cat((self.S_pa_batch[0:self.pa_batch_size], S_batch), 0),
+                     torch.cat((self.A_pa_batch[0:self.pa_batch_size], A_batch), 0),
+                     torch.cat((self.G_pa_batch[0:self.pa_batch_size], G_batch), 0),
+                     torch.cat((self.TDE_pa_batch[0:self.pa_batch_size], TDE_batch), 0))
         else:
             batch = (S_batch, A_batch, G_batch, TDE_batch)
 
         # Add some experiences to the buffer with respect of 1 - TD error
-        nb_new_memories = min(10, counter)
+        nb_new_memories = min(5, counter)
         idx = torch.multinomial(1 - TDE_batch, nb_new_memories, replacement=True)
         if self.A_pa_batch is None:
             self.A_pa_batch = A_batch[idx]
@@ -298,7 +300,7 @@ class PolicyGradient:
         # ------------------------------------------------------------------------------------------------------
         loss = self.update_policy(batch)
 
-        return loss, sum_reward, sum_v, torch.mean(TDE_batch).item()
+        return loss, sum_reward, sum_v, torch.sum(TDE_batch).item()
 
     def exploit_one_episode(self, S):
         sum_reward = 0

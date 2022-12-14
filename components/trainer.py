@@ -1,11 +1,24 @@
+import gc
 import os
 import random
 
+import numpy as np
 from tqdm import tqdm
 
 from components.agent import PolicyGradient
 from components.environment import Environment
 from components.plot import MetricMonitor, metrics_to_pdf, metrics_eval_to_pdf
+
+
+def describe(arr):
+    print("Measures of Central Tendency")
+    print("Mean =", np.mean(arr))
+    print("Median =", np.median(arr))
+    print("Measures of Dispersion")
+    print("Minimum =", np.min(arr))
+    print("Maximum =", np.max(arr))
+    print("Variance =", np.var(arr))
+    print("Standard Deviation =", np.std(arr))
 
 
 class Trainer:
@@ -26,6 +39,8 @@ class Trainer:
         if transfer_learning:
             self.agent.load(transfer_learning)
 
+        self.agent.model_summary()
+
         if real_time_monitor:
             print("[INFO] Real time monitor server running on localhost.")
             metric_monitor = MetricMonitor()
@@ -44,6 +59,7 @@ class Trainer:
         td_errors = []
         nb_action = []
         nb_conv_action = []
+        nb_min_zoom_action = []
 
         # --------------------------------------------------------------------------------------------------------------
         # LEARNING STEPS
@@ -51,24 +67,27 @@ class Trainer:
         with tqdm(range(nb_episodes), unit="episode") as episode:
             for i in episode:
                 # random image selection in the training set
-                index = random.randint(0, len(self.img_list) - 1)
-                img = os.path.join(self.img_path, self.img_list[index])
-
-                bb = os.path.join(self.label_path, self.img_list[index].split('.')[0] + '.txt')
+                while True:
+                    index = random.randint(0, len(self.img_list) - 1)
+                    img = os.path.join(self.img_path, self.img_list[index])
+                    bb = os.path.join(self.label_path, self.img_list[index].split('.')[0] + '.txt')
+                    if os.path.exists(bb):
+                        break
 
                 first_state = self.env.reload_env(img, bb)
                 loss, sum_reward, sum_v, mean_tde = self.agent.fit_one_episode(first_state)
 
                 rewards.append(sum_reward)
                 losses.append(loss)
-                vs.append(sum_v)
-                td_errors.append(mean_tde)
                 st = self.env.nb_actions_taken
+                vs.append(sum_v / st)
+                td_errors.append(mean_tde)
                 nb_action.append(st)
                 nb_conv_action.append(self.env.conventional_policy_nb_step)
+                nb_min_zoom_action.append(self.env.min_zoom_action)
 
                 if real_time_monitor:
-                    metric_monitor.update_values(sum_v, sum_reward, loss, mean_tde, st)
+                    metric_monitor.update_values(sum_v / st, sum_reward, loss, mean_tde, st)
 
                 episode.set_postfix(rewards=sum_reward, loss=loss, nb_action=st, V=sum_v / st, tde=mean_tde)
 
@@ -105,7 +124,9 @@ class Trainer:
                 os.mkdir(path_plot)
             except OSError as error:
                 print(error)
-            metrics_to_pdf(vs, rewards, losses, td_errors, nb_action, nb_conv_action, path_plot, "training")
+            metrics_to_pdf(vs, rewards, losses, td_errors,
+                           nb_action, nb_conv_action, nb_min_zoom_action,
+                           path_plot, "training")
 
     def evaluate(self, eval_path, result_path='.', plot_metric=False):
 
@@ -120,27 +141,51 @@ class Trainer:
         vs = []
         nb_action = []
         nb_conv_action = []
+        precision = []
+        pertinence = []
 
         # --------------------------------------------------------------------------------------------------------------
         # EVALUATION STEPS
         # --------------------------------------------------------------------------------------------------------------
-        with tqdm(range(len(self.img_list)), unit="episode") as episode:
+        #with tqdm(range(len(self.img_list)), unit="episode") as episode:
+        with tqdm(range(5), unit="episode") as episode:
             for i in episode:
+                collected = gc.collect()
                 img_filename = self.img_list[i]
                 img = os.path.join(self.img_path, img_filename)
                 bb = os.path.join(self.label_path, img_filename.split('.')[0] + '.txt')
+                if not os.path.exists(bb):
+                    continue
 
                 first_state = self.env.reload_env(img, bb)
                 sum_reward, sum_v = self.agent.exploit_one_episode(first_state)
-
-                rewards.append(sum_reward)
-                vs.append(sum_v)
                 st = self.env.nb_actions_taken
+                rewards.append(sum_reward)
+                vs.append(sum_v / st)
                 nb_action.append(st)
                 nb_conv_action.append(self.env.conventional_policy_nb_step)
 
+                pr = self.env.min_zoom_action / self.env.nb_max_conv_action
+                prc = self.env.conventional_policy_nb_step / self.env.nb_max_conv_action
+                precision.append(1 - pr)
+                pertinence.append(prc - pr)
+
                 episode.set_postfix(rewards=sum_reward, nb_action=st, V=sum_v / st)
 
+        # --------------------------------------------------------------------------------------------------------------
+        # PLOT
+        # --------------------------------------------------------------------------------------------------------------
+        print("")
+        print("Overall precision on evaluation")
+        print("-------------------------------")
+        describe(precision)
+        print("-------------------------------")
+
+        print("")
+        print("Overall pertinence on evaluation")
+        print("-------------------------------")
+        describe(pertinence)
+        print("-------------------------------")
 
         if plot_metric:
             path = os.path.join(result_path, "rts_runs/evaluation")
@@ -151,4 +196,5 @@ class Trainer:
             except OSError as error:
                 print(error)
 
-            metrics_eval_to_pdf(vs, rewards, nb_action, nb_conv_action, path_plot, "evaluation")
+            metrics_eval_to_pdf(vs, rewards, nb_action, nb_conv_action,
+                                pertinence, precision, path_plot, "evaluation")

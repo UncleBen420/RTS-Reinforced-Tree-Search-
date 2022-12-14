@@ -54,7 +54,7 @@ class MetricMonitor:
                 dcc.Graph(id='fig_l', figure=fig_l),
                 dcc.Graph(id='fig_td', figure=fig_td),
                 dcc.Graph(id='fig_nb', figure=fig_nb),
-                dcc.Interval(id='graph-update', interval=1000, n_intervals=0)
+                dcc.Interval(id='graph-update', interval=10000, n_intervals=0)
             ]
         )
 
@@ -67,16 +67,16 @@ class MetricMonitor:
             [Input('graph-update', 'n_intervals')]
         )
         def update_graph_scatter(n):
-
-            try:
-                v, r, l, td, nb = q.get(block=False)
-                vs.append(v)
-                rewards.append(r)
-                losses.append(l)
-                td_errors.append(td)
-                nb_actions.append(nb)
-            except queue.Empty:
-                pass
+            while True:
+                try:
+                    v, r, l, td, nb = q.get(block=False)
+                    vs.append(v)
+                    rewards.append(r)
+                    losses.append(l)
+                    td_errors.append(td)
+                    nb_actions.append(nb)
+                except queue.Empty:
+                    break
 
             episodes = range(len(vs))
             fig_v = px.line(x=episodes, y=vs, title='Mean state value (V)',
@@ -110,7 +110,7 @@ class MetricMonitor:
         self.server.start()
 
 
-def metrics_to_pdf(v, r, l, td, nb, nbc, directory, stage):
+def metrics_to_pdf(v, r, l, td, nb, nbc, mza, directory, stage):
 
     pp = PdfPages(directory + stage + "_V.pdf")
     plt.clf()
@@ -152,6 +152,7 @@ def metrics_to_pdf(v, r, l, td, nb, nbc, directory, stage):
     plt.clf()
     plt.plot(nb, label="agent")
     plt.plot(nbc, label="conventional policy")
+    plt.plot(mza, label="agent at the maximum zoom")
     plt.title('Number of steps during each episodes')
     plt.xlabel('Episodes')
     plt.ylabel('Steps')
@@ -160,33 +161,45 @@ def metrics_to_pdf(v, r, l, td, nb, nbc, directory, stage):
     pp.close()
 
 
-def metrics_eval_to_pdf(v, r, nb, nbc, directory, stage):
+def metrics_eval_to_pdf(v, r, nb, nbc, pertinence, precision, directory, stage):
 
     pp = PdfPages(directory + stage + "_V.pdf")
     plt.clf()
-    plt.plot(v)
+    plt.boxplot(v)
     plt.title('Mean of state value during an episode')
-    plt.xlabel('Episodes')
     plt.ylabel('V')
     pp.savefig()
     pp.close()
 
     pp = PdfPages(directory + stage + "_R.pdf")
     plt.clf()
-    plt.plot(r)
+    plt.boxplot(r)
     plt.title('Sum of rewards accumulated during an episode')
-    plt.xlabel('Episodes')
     plt.ylabel('Rewards')
     pp.savefig()
     pp.close()
 
     pp = PdfPages(directory + stage + "_nb_steps.pdf")
     plt.clf()
-    plt.plot(nb, label="agent")
-    plt.plot(nbc, label="conventional policy")
+    labels = ["agent", "conventional policy"]
+    plt.boxplot([nb, nbc], labels=labels)
     plt.title('Number of steps during each episodes')
-    plt.xlabel('Episodes')
     plt.ylabel('Steps')
-    plt.legend(loc='upper right')
+    pp.savefig()
+    pp.close()
+
+    pp = PdfPages(directory + stage + "_precision.pdf")
+    plt.clf()
+    plt.boxplot(precision)
+    plt.title('precision of the guess on the object position')
+    plt.ylabel('precision')
+    pp.savefig()
+    pp.close()
+
+    pp = PdfPages(directory + stage + "_pertinence.pdf")
+    plt.clf()
+    plt.boxplot(pertinence)
+    plt.title('pertinence of using rts over a conventional policy')
+    plt.ylabel('pertinence')
     pp.savefig()
     pp.close()
