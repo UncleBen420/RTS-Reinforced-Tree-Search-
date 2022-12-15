@@ -147,8 +147,8 @@ class Trainer:
         # --------------------------------------------------------------------------------------------------------------
         # EVALUATION STEPS
         # --------------------------------------------------------------------------------------------------------------
-        #with tqdm(range(len(self.img_list)), unit="episode") as episode:
-        with tqdm(range(5), unit="episode") as episode:
+        with tqdm(range(len(self.img_list)), unit="episode") as episode:
+        #with tqdm(range(5), unit="episode") as episode:
             for i in episode:
                 collected = gc.collect()
                 img_filename = self.img_list[i]

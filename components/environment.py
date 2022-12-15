@@ -46,13 +46,11 @@ class PriorityQueue(object):
             exit()
 
 
-class Tree:
+class Node:
     def __init__(self, img, pos, parent, number):
         x, y = pos
         self.number = number
-        self.children = []
         self.parent = parent
-        self.visited = False
         self.img = img
         self.resized_img = cv2.resize(img, (MODEL_RES, MODEL_RES)) / 255.
         self.x = x
@@ -90,7 +88,7 @@ class Tree:
         x_ = self.x + (i * w)
         y_ = self.y + (j * h)
 
-        return Tree(self.img[h * j:h + h * j, w * i: w + w * i], (x_, y_), self.number, number)
+        return Node(self.img[h * j:h + h * j, w * i: w + w * i], (x_, y_), self.number, number)
 
 
 def check_cuda():
@@ -139,7 +137,7 @@ class Environment:
         self.pq = PriorityQueue()
         self.nb_actions_taken = 0
         self.min_zoom_action = 0
-        self.current_node = Tree(self.full_img, (0, 0), -1, self.nb_actions_taken)
+        self.current_node = Node(self.full_img, (0, 0), -1, self.nb_actions_taken)
 
         return self.current_node.get_state()
 
@@ -157,10 +155,12 @@ class Environment:
 
         self.dim = max_
         self.min_res = self.dim
+        self.nb_zoom_max = 0
         while True:
             if self.min_res / 2 <= TASK_MODEL_RES:
                 break
             else:
+                self.nb_zoom_max += 1
                 self.min_res /= 2
 
         self.nb_max_conv_action = (self.dim / self.min_res) ** 2
@@ -213,7 +213,7 @@ class Environment:
 
     def take_action(self, action):
 
-        reward = -1.
+        reward = 0.
         self.nb_actions_taken += 1
         is_terminal = False
 
@@ -240,14 +240,13 @@ class Environment:
 
             self.min_zoom_action += 1
             if self.sub_img_contain_object(child.x, child.y, child.img.shape[0]):
-                reward = 30.
+                reward = 10
                 is_terminal = True
 
-        if self.pq.isEmpty():
-            raise Exception("No object has been found by the agent. Check if the coordinate are correct")
-
-        self.current_node = self.pq.pop()
-
+        if not self.pq.isEmpty():
+            self.current_node = self.pq.pop()
+        else:
+            self.current_node = child
         S_prime = self.current_node.get_state()
 
         return S_prime, reward, is_terminal, node_info, (self.current_node.proba, self.current_node.V)

@@ -1,13 +1,11 @@
-import time
 import numpy as np
 import torch
 from torch import nn
 from torch.optim.lr_scheduler import StepLR
-from tqdm import tqdm
 
 
 class PolicyNet(nn.Module):
-    def __init__(self, img_res=64, n_hidden_nodes=64, n_kernels=32):
+    def __init__(self, img_res=64, n_hidden_nodes=64, n_kernels=64):
         super(PolicyNet, self).__init__()
 
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -75,20 +73,15 @@ class PolicyNet(nn.Module):
         x = self.middle(x)
         return self.head(x), self.value_head(x)
 
-    def follow_policy(self, probs):
-        return np.random.choice(self.action_space, p=probs.detach().cpu().numpy()[0])
-
 
 class PolicyGradient:
 
-    def __init__(self, environment, learning_rate=0.0001,
-                 episodes=100, gamma=0.7,
-                 entropy_coef=0.1, beta_coef=0.01,
-                 lr_gamma=0.9, batch_size=64, pa_dataset_size=256, pa_batch_size=64, img_res=64):
+    def __init__(self, environment, learning_rate=0.001, gamma=0.6,
+                 entropy_coef=0.01, beta_coef=0.05,
+                 lr_gamma=0.99, batch_size=64, pa_dataset_size=2048, pa_batch_size=100, img_res=64):
 
         self.gamma = gamma
         self.environment = environment
-        self.episodes = episodes
         self.beta_coef = beta_coef
         self.entropy_coef = entropy_coef
         self.min_r = 0
@@ -265,9 +258,10 @@ class PolicyGradient:
         else:
             batch = (S_batch, A_batch, G_batch, TDE_batch)
 
-        # Add some experiences to the buffer with respect of 1 - TD error
-        nb_new_memories = min(5, counter)
-        idx = torch.multinomial(1 - TDE_batch, nb_new_memories, replacement=True)
+        # Add some experiences to the buffer with respect of TD error
+        nb_new_memories = min(10, counter)
+
+        idx = torch.randperm(len(A_batch))[:nb_new_memories]
         if self.A_pa_batch is None:
             self.A_pa_batch = A_batch[idx]
             self.S_pa_batch = S_batch[idx]
@@ -308,7 +302,7 @@ class PolicyGradient:
 
         existing_proba = None
         existing_v = None
-        start_time = time.time()
+
         while True:
             # State preprocess
             S = torch.from_numpy(S).float()
