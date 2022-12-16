@@ -363,7 +363,7 @@ if __name__ == "__main__":
     model = dynamic_import("Dummy_model", "Dummy_model")()
 
     rts = RTS(model)
-    print(rts(img))
+    print(len(rts(img)))
     print(rts.env.sum_V)
     plt.imshow(rts.env.get_history_img())
     plt.show()

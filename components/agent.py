@@ -77,8 +77,8 @@ class PolicyNet(nn.Module):
 class PolicyGradient:
 
     def __init__(self, environment, learning_rate=0.001, gamma=0.6,
-                 entropy_coef=0.01, beta_coef=0.05,
-                 lr_gamma=0.99, batch_size=64, pa_dataset_size=2048, pa_batch_size=100, img_res=64):
+                 entropy_coef=0.1, beta_coef=0.01,
+                 lr_gamma=0.7, batch_size=64, pa_dataset_size=2048, pa_batch_size=100, img_res=64):
 
         self.gamma = gamma
         self.environment = environment
@@ -116,7 +116,7 @@ class PolicyGradient:
 
     def a2c(self, advantages, rewards, action_probs, log_probs, selected_log_probs, values):
 
-        entropy_loss = self.entropy_coef * (action_probs * log_probs).sum(1).mean()
+        entropy_loss = - self.entropy_coef * (action_probs * log_probs).sum(1).mean()
         value_loss = self.beta_coef * torch.nn.functional.mse_loss(values.squeeze(), rewards)
         policy_loss = - (advantages.unsqueeze(1) * selected_log_probs).mean()
         loss = policy_loss + entropy_loss + value_loss
@@ -189,6 +189,7 @@ class PolicyGradient:
         sum_reward = 0
         existing_proba = None
         existing_v = None
+        existing_var = None
         while True:
 
             counter += 1
@@ -203,17 +204,19 @@ class PolicyGradient:
                     action_probs = torch.nn.functional.softmax(action_probs, dim=-1)
                     action_probs = action_probs.detach().cpu().numpy()[0]
                     V = V.item()
+                    var = np.var(action_probs)
             else:
                 action_probs = existing_proba
                 V = existing_v
+                var = existing_var
 
             action_probs /= action_probs.sum()  # adjust probabilities
-            A = self.environment.follow_policy(action_probs, V)
+            A = self.environment.follow_policy(action_probs, V, var)
 
             sum_v += V
 
             S_prime, R, is_terminal, node_info, existing_pred = self.environment.take_action(A)
-            existing_proba, existing_v = existing_pred
+            existing_proba, existing_v, existing_var = existing_pred
             parent, current, child = node_info
 
             S_batch.append(S)
@@ -261,7 +264,8 @@ class PolicyGradient:
         # Add some experiences to the buffer with respect of TD error
         nb_new_memories = min(10, counter)
 
-        idx = torch.randperm(len(A_batch))[:nb_new_memories]
+        #idx = torch.randperm(len(A_batch))[:nb_new_memories]
+        idx = torch.multinomial(1 - TDE_batch, nb_new_memories, replacement=True)
         if self.A_pa_batch is None:
             self.A_pa_batch = A_batch[idx]
             self.S_pa_batch = S_batch[idx]
