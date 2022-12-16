@@ -57,7 +57,6 @@ class Node:
         self.y = y
         self.proba = None
         self.V = None
-        self.var = None
         self.nb_children = 0
 
     def get_state(self):
@@ -174,7 +173,7 @@ class Environment:
                 values = line.split()
                 self.objects_coordinates.append((float(values[0]), float(values[1])))
 
-    def follow_policy(self, probs, V, var):
+    def follow_policy(self, probs, V):
         A = np.random.choice(self.action_space, p=probs)
         p = probs[A]
         probs[A] = 0.
@@ -182,15 +181,13 @@ class Environment:
         probs[probs != 0.] += giveaway
         self.current_node.proba = probs
         self.current_node.V = V
-        self.current_node.var = var
         return A
 
-    def exploit(self, probs, V, var):
+    def exploit(self, probs, V):
         A = np.argmax(probs)
         probs[A] = 0.
         self.current_node.proba = probs
         self.current_node.V = V
-        self.current_node.var = var
         return A
 
     def calc_conventional_policy_step(self, x, y):
@@ -254,4 +251,4 @@ class Environment:
             self.current_node = child
         S_prime = self.current_node.get_state()
 
-        return S_prime, reward, is_terminal, node_info, (self.current_node.proba, self.current_node.V, self.current_node.var)
+        return S_prime, reward, is_terminal, node_info, (self.current_node.proba, self.current_node.V)

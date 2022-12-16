@@ -189,7 +189,6 @@ class PolicyGradient:
         sum_reward = 0
         existing_proba = None
         existing_v = None
-        existing_var = None
         while True:
 
             counter += 1
@@ -204,19 +203,18 @@ class PolicyGradient:
                     action_probs = torch.nn.functional.softmax(action_probs, dim=-1)
                     action_probs = action_probs.detach().cpu().numpy()[0]
                     V = V.item()
-                    var = np.var(action_probs)
+
             else:
                 action_probs = existing_proba
                 V = existing_v
-                var = existing_var
 
             action_probs /= action_probs.sum()  # adjust probabilities
-            A = self.environment.follow_policy(action_probs, V, var)
+            A = self.environment.follow_policy(action_probs, V)
 
             sum_v += V
 
             S_prime, R, is_terminal, node_info, existing_pred = self.environment.take_action(A)
-            existing_proba, existing_v, existing_var = existing_pred
+            existing_proba, existing_v = existing_pred
             parent, current, child = node_info
 
             S_batch.append(S)

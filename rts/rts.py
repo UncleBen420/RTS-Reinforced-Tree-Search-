@@ -276,10 +276,10 @@ class Environment:
 
         self.history.append(pos)
 
-        if not self.current_node.is_visited():
+        if not self.current_node.is_visited() and self.current_node.V > 6.:
             self.pq.append(self.current_node, self.current_node.V)
 
-        if not child.image_limit_attain():
+        if not child.image_limit_attain() and self.current_node.V > 6.:
             self.pq.append(child, self.current_node.V)
 
         if self.current_node.is_visited:
@@ -332,7 +332,7 @@ def dynamic_import(module_name, class_name):
 
 class RTS:
 
-    def __init__(self, model, agent_weights_file="weights_rts.pth", first_hit_stop=False, threshold=0.2):
+    def __init__(self, model, agent_weights_file="weights_rts.pth", first_hit_stop=False, threshold=0.):
 
         file_dir = os.path.dirname(os.path.abspath(__file__))
         rts_dir = os.path.join(file_dir, 'weights', agent_weights_file)
