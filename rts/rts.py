@@ -188,13 +188,22 @@ class Node:
         return Node(self.img[window * j:window + window * j, window * i: window + window * i], (x_, y_))
 
 
+def normalize(values):
+    min_val = np.min(values)
+    max_val = np.max(values)
+
+    return (values - min_val) / (max_val - min_val + 0.000000001)
+
+
 class Environment:
     """
     this class implement a problem where the agent must mark the place where he have found boat.
     He must not mark place where there is house.
     """
 
-    def __init__(self, agent, model, first_hit_stop=False, threshold=0.2):
+    def __init__(self, agent, model, collect=False, threshold=0.2):
+        self.collection_V = None
+        self.collection = None
         self.history = None
         self.sum_V = None
         self.nb_zoom_max = None
@@ -210,7 +219,7 @@ class Environment:
         self.nb_actions_taken = 0
         self.agent = agent
         self.model = model
-        self.first_hit_stop = first_hit_stop
+        self.collect = collect
         self.threshold = threshold
 
     def reload_env(self, img):
@@ -226,6 +235,8 @@ class Environment:
         self.min_zoom_action = 0
         self.sum_V = 0
         self.history = []
+        self.collection = []
+        self.collection_V = []
         self.current_node = Node(self.full_img, (0, 0))
 
     def prepare_img(self, img):
@@ -263,8 +274,6 @@ class Environment:
             S = self.current_node.get_state()
             preds, V = self.agent.predict(S)
 
-            preds[preds < self.threshold] = 0.
-
             self.current_node.V = V
             self.current_node.proba = preds
             self.sum_V += V
@@ -272,15 +281,16 @@ class Environment:
         A = self.current_node.get_next_action()
 
         child = self.current_node.get_child(A)
-        pos = (child.x, child.y, child.img.shape[0])
+        V = self.current_node.V
+        pos = (child.x, child.y, child.img.shape[0], V)
 
         self.history.append(pos)
 
-        if not self.current_node.is_visited() and self.current_node.V > 6.:
-            self.pq.append(self.current_node, self.current_node.V)
+        if not self.current_node.is_visited() and V > 0:
+            self.pq.append(self.current_node, V)
 
-        if not child.image_limit_attain() and self.current_node.V > 6.:
-            self.pq.append(child, self.current_node.V)
+        if not child.image_limit_attain() and V > 0:
+            self.pq.append(child, V)
 
         if self.current_node.is_visited:
             del self.current_node
@@ -292,21 +302,34 @@ class Environment:
 
         if child.image_limit_attain():
             self.min_zoom_action += 1
-            X = child.get_model_x()
-            model_prediction = (self.model(X), pos)
-
-            if self.first_hit_stop:
-                is_terminal = True
+            if self.collect:
+                self.collection.append((child.get_model_x(), pos))
+                self.collection_V.append(V)
+            else:
+                X = child.get_model_x()
+                model_prediction = (self.model(X), pos)
 
         return is_terminal, model_prediction
 
-    def get_history_img(self):
+    def pred_collection(self):
+        Vs = normalize(self.collection_V)
+
+        predictions = []
+        idx = np.where(Vs >= self.threshold)[0]
+        for i in idx:
+            X, pos = self.collection[i]
+            self.model(X)
+            predictions.append((X, pos))
+
+        return predictions
+
+    def get_history_img(self, history):
         ratio = 255. / self.dim
-        history = cv2.resize(self.full_img, (255, 255))
+        hist_img = cv2.resize(self.full_img, (255, 255))
         heat_map = np.zeros((255, 255))
 
-        for step in self.history:
-            x, y, window = step
+        for step in history:
+            x, y, window, V = step
             x *= ratio
             y *= ratio
             window *= ratio
@@ -314,14 +337,14 @@ class Environment:
             y = int(y)
             window = int(window)
 
-            heat_map[y:window + y, x: window + x] += 1
+            heat_map[y:window + y, x: window + x] += V
 
         heat_map /= np.max(heat_map)
         heat_map *= 255
 
         blur = cv2.GaussianBlur(heat_map.astype(np.uint8), (3, 3), 3)
         heatmap_img = cv2.applyColorMap(blur, cv2.COLORMAP_JET)
-        return cv2.addWeighted(heatmap_img, 0.4, history, 0.6, 0)
+        return cv2.addWeighted(heatmap_img, 0.4, hist_img, 0.6, 0)
 
 
 def dynamic_import(module_name, class_name):
@@ -332,7 +355,7 @@ def dynamic_import(module_name, class_name):
 
 class RTS:
 
-    def __init__(self, model, agent_weights_file="weights_rts.pth", first_hit_stop=False, threshold=0.):
+    def __init__(self, model, agent_weights_file="weights_rts.pth", collect=False, threshold=0.1):
 
         file_dir = os.path.dirname(os.path.abspath(__file__))
         rts_dir = os.path.join(file_dir, 'weights', agent_weights_file)
@@ -340,7 +363,8 @@ class RTS:
         self.agent = Agent()
         self.agent.load(rts_dir)
         self.model = model
-        self.env = Environment(self.agent, self.model, first_hit_stop, threshold)
+        self.collect = collect
+        self.env = Environment(self.agent, self.model, collect, threshold=threshold)
 
     def __call__(self, X):
         self.env.reload_env(X)
@@ -355,16 +379,30 @@ class RTS:
             if is_terminal:
                 break
 
+        if self.collect:
+            predictions = self.env.pred_collection()
+
         return predictions
 
 if __name__ == "__main__":
-    img = cv2.imread("test_img.jpg")
+    img = cv2.imread("test_img2.jpg")
 
     model = dynamic_import("Dummy_model", "Dummy_model")()
 
-    rts = RTS(model)
-    print(len(rts(img)))
+    rts = RTS(model, collect=True)
+    preds = rts(img)
+    pos = []
+    X = []
+    for p in preds:
+        x, po = p
+        pos.append(po)
+        X.append(x)
+
+    print(len(pos))
     print(rts.env.sum_V)
-    plt.imshow(rts.env.get_history_img())
+    plt.imshow(rts.env.get_history_img(rts.env.history))
+    plt.show()
+
+    plt.imshow(rts.env.get_history_img(pos))
     plt.show()
 

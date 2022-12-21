@@ -156,12 +156,9 @@ class Environment:
         self.dim = max_
         self.min_res = self.dim
         self.nb_zoom_max = 0
-        while True:
-            if self.min_res / 2 <= TASK_MODEL_RES:
-                break
-            else:
-                self.nb_zoom_max += 1
-                self.min_res /= 2
+        while self.min_res / 2 > TASK_MODEL_RES:
+            self.nb_zoom_max += 1
+            self.min_res /= 2
 
         self.nb_max_conv_action = (self.dim / self.min_res) ** 2
 
