@@ -22,13 +22,13 @@ def describe(arr):
 
 
 class Trainer:
-    def __init__(self):
+    def __init__(self, epsilon, learning_rate, gamma, lr_gamma):
         self.label_path = None
         self.img_path = None
         self.label_list = None
         self.img_list = None
-        self.env = Environment()
-        self.agent = PolicyGradient(self.env)
+        self.env = Environment(epsilon=epsilon)
+        self.agent = PolicyGradient(self.env, learning_rate=learning_rate, gamma=gamma, lr_gamma=lr_gamma)
 
     def train(self, nb_episodes, train_path, result_path='.',
               real_time_monitor=False, plot_metric=False, transfer_learning=False):
@@ -55,8 +55,7 @@ class Trainer:
         # for plotting
         losses = []
         rewards = []
-        vs = []
-        td_errors = []
+        good_hits_ratio = []
         nb_action = []
         nb_conv_action = []
         nb_min_zoom_action = []
@@ -70,26 +69,27 @@ class Trainer:
                 while True:
                     index = random.randint(0, len(self.img_list) - 1)
                     img = os.path.join(self.img_path, self.img_list[index])
-                    bb = os.path.join(self.label_path, self.img_list[index].split('.')[0] + '.txt')
+                    bb = os.path.join(self.label_path, self.img_list[index][:-4] + '.txt')
                     if os.path.exists(bb):
                         break
 
                 first_state = self.env.reload_env(img, bb)
-                loss, sum_reward, sum_v, mean_tde = self.agent.fit_one_episode(first_state)
+                loss, sum_reward = self.agent.fit_one_episode(first_state)
 
                 rewards.append(sum_reward)
                 losses.append(loss)
                 st = self.env.nb_actions_taken
-                vs.append(sum_v / st)
-                td_errors.append(mean_tde)
                 nb_action.append(st)
                 nb_conv_action.append(self.env.conventional_policy_nb_step)
                 nb_min_zoom_action.append(self.env.min_zoom_action)
 
-                if real_time_monitor:
-                    metric_monitor.update_values(sum_v / st, sum_reward, loss, mean_tde, st)
+                good_hits = self.env.good_hits / st
+                good_hits_ratio.append(good_hits)
 
-                episode.set_postfix(rewards=sum_reward, loss=loss, nb_action=st, V=sum_v / st, tde=mean_tde)
+                if real_time_monitor:
+                    metric_monitor.update_values(st, sum_reward, loss , st)
+
+                episode.set_postfix(rewards=sum_reward, loss=loss, nb_action=st, good_hits_ratio=good_hits)
 
         # --------------------------------------------------------------------------------------------------------------
         # PLOT AND WEIGHTS SAVING
@@ -124,7 +124,7 @@ class Trainer:
                 os.mkdir(path_plot)
             except OSError as error:
                 print(error)
-            metrics_to_pdf(vs, rewards, losses, td_errors,
+            metrics_to_pdf(good_hits_ratio, rewards, losses,
                            nb_action, nb_conv_action, nb_min_zoom_action,
                            path_plot, "training")
 
@@ -138,7 +138,7 @@ class Trainer:
 
         # for plotting
         rewards = []
-        vs = []
+        good_hits_ratio = []
         nb_action = []
         nb_conv_action = []
         precision = []
@@ -148,20 +148,17 @@ class Trainer:
         # EVALUATION STEPS
         # --------------------------------------------------------------------------------------------------------------
         with tqdm(range(len(self.img_list)), unit="episode") as episode:
-        #with tqdm(range(5), unit="episode") as episode:
             for i in episode:
-                collected = gc.collect()
                 img_filename = self.img_list[i]
                 img = os.path.join(self.img_path, img_filename)
-                bb = os.path.join(self.label_path, img_filename.split('.')[0] + '.txt')
+                bb = os.path.join(self.label_path, img_filename[:-4] + '.txt')
                 if not os.path.exists(bb):
                     continue
 
                 first_state = self.env.reload_env(img, bb)
-                sum_reward, sum_v = self.agent.exploit_one_episode(first_state)
+                sum_reward = self.agent.exploit_one_episode(first_state)
                 st = self.env.nb_actions_taken
                 rewards.append(sum_reward)
-                vs.append(sum_v / st)
                 nb_action.append(st)
                 nb_conv_action.append(self.env.conventional_policy_nb_step)
 
@@ -170,7 +167,10 @@ class Trainer:
                 precision.append(1 - pr)
                 pertinence.append(prc - pr)
 
-                episode.set_postfix(rewards=sum_reward, nb_action=st, V=sum_v / st)
+                good_hits = self.env.good_hits / st
+                good_hits_ratio.append(good_hits)
+
+                episode.set_postfix(rewards=sum_reward, nb_action=st, good_hits_ratio=good_hits)
 
         # --------------------------------------------------------------------------------------------------------------
         # PLOT
@@ -196,5 +196,5 @@ class Trainer:
             except OSError as error:
                 print(error)
 
-            metrics_eval_to_pdf(vs, rewards, nb_action, nb_conv_action,
+            metrics_eval_to_pdf(good_hits_ratio, rewards, nb_action, nb_conv_action,
                                 pertinence, precision, path_plot, "evaluation")

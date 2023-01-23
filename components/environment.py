@@ -13,7 +13,6 @@ from matplotlib import pyplot as plt
 
 MODEL_RES = 64
 TASK_MODEL_RES = 100
-ZOOM_DEPTH = 4
 
 
 class PriorityQueue(object):
@@ -107,7 +106,7 @@ class Environment:
     He must not mark place where there is house.
     """
 
-    def __init__(self):
+    def __init__(self, epsilon):
         self.min_res = None
         self.min_zoom_action = None
         self.objects_coordinates = None
@@ -123,6 +122,9 @@ class Environment:
         self.nb_actions_taken = 0
         self.action_space = 4
         self.cv_cuda = check_cuda()
+        self.e = epsilon
+
+        self.good_hits = 0
 
     def reload_env(self, img, bb):
         """
@@ -137,6 +139,7 @@ class Environment:
         self.pq = PriorityQueue()
         self.nb_actions_taken = 0
         self.min_zoom_action = 0
+        self.good_hits = 0
         self.current_node = Node(self.full_img, (0, 0), -1, self.nb_actions_taken)
 
         return self.current_node.get_state()
@@ -168,21 +171,26 @@ class Environment:
         for line in lines:
             if line is not None:
                 values = line.split()
-                self.objects_coordinates.append((float(values[0]), float(values[1])))
+                self.objects_coordinates.append((float(values[0]), float(values[1]),
+                                                 float(values[2]), float(values[3])))
 
-    def follow_policy(self, probs, V):
-        A = np.random.choice(self.action_space, p=probs)
-        p = probs[A]
-        probs[A] = 0.
-        giveaway = p / (np.count_nonzero(probs) + 0.00000001)
-        probs[probs != 0.] += giveaway
+    def follow_policy(self, probs):
+        p = random.random()
+        if p < self.e:
+            idx = np.where(probs > -1000.)[0]
+            A = random.choice(idx)
+        else:
+            A = np.argmax(probs)
+        V = probs[A]
+        probs[A] = -1000.
         self.current_node.proba = probs
         self.current_node.V = V
         return A
 
-    def exploit(self, probs, V):
+    def exploit(self, probs):
         A = np.argmax(probs)
-        probs[A] = 0.
+        V = probs[A]
+        probs[A] = -1000.
         self.current_node.proba = probs
         self.current_node.V = V
         return A
@@ -199,14 +207,41 @@ class Environment:
         This method allow the user to know if the current subgrid contain charlie or not
         :return: true if the sub grid contains charlie.
         """
+        max_iou = 0.
+        for i, coordinate in enumerate(self.objects_coordinates):
+            o_x, o_y, o_w, o_h = coordinate
+            iou = self.intersection_over_union((x, y, window, window), (o_x, o_y, o_w, o_h))
+            if iou > max_iou:
+                max_iou = iou
+        return max_iou
 
-        for coordinate in self.objects_coordinates:
-            o_x, o_y = coordinate
+    def intersection_over_union(self, boxA, boxB):
+        """
+        This method calculate the intersection over union of 2 bounding boxes.
+        @param boxA: a bounding box given by (x, y, w, h).
+        @param boxB: a bounding box given by (x, y, w, h).
+        @return: the iou.
+        """
 
-            if x <= o_x <= x + window and y <= o_y <= y + window:
-                self.calc_conventional_policy_step(o_x, o_y)
-                return True
-        return False
+        # determine the (x, y)-coordinates of the intersection rectangle
+        xA = max(boxA[0], boxB[0])
+        yA = max(boxA[1], boxB[1])
+        xB = min(boxA[2] + boxA[0], boxB[2] + boxB[0])
+        yB = min(boxA[3] + boxA[1], boxB[3] + boxB[1])
+
+        # compute the area of intersection rectangle
+        interArea = abs(max((xB - xA, 0)) * max((yB - yA), 0))
+        if interArea == 0:
+            return 0
+        # compute the area of both the prediction and ground-truth
+        # rectangles
+        boxAArea = boxA[2] * boxA[3]
+        boxBArea = boxB[2] * boxB[3]
+
+        iou = interArea / float(boxAArea + boxBArea - interArea)
+
+        # return the intersection over union value
+        return iou
 
     def take_action(self, action):
 
@@ -234,13 +269,18 @@ class Environment:
             is_terminal = True
 
         if child.image_limit_attain():
-
             self.min_zoom_action += 1
             if self.sub_img_contain_object(child.x, child.y, child.img.shape[0]):
-                reward = 100.
+                reward = 100
                 is_terminal = True
             else:
                 reward = -1.
+
+        if self.sub_img_contain_object(child.x, child.y, child.img.shape[0]):
+            self.good_hits += 1
+
+        if is_terminal:
+            self.calc_conventional_policy_step(child.x, child.y)
 
         if not self.pq.isEmpty():
             self.current_node = self.pq.pop()
@@ -248,4 +288,4 @@ class Environment:
             self.current_node = child
         S_prime = self.current_node.get_state()
 
-        return S_prime, reward, is_terminal, node_info, (self.current_node.proba, self.current_node.V)
+        return S_prime, reward, is_terminal, node_info, self.current_node.proba

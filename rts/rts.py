@@ -8,8 +8,6 @@ from torch import nn
 
 AGENT_RES = 64
 MODEL_RES = 100
-ZOOM_DEPTH = 4
-
 
 class PolicyNet(nn.Module):
     def __init__(self, img_res=64, n_hidden_nodes=64, n_kernels=64):
@@ -23,34 +21,32 @@ class PolicyNet(nn.Module):
         self.sub_img_res = int(self.img_res / 2)
 
         self.backbone = torch.nn.Sequential(
-            torch.nn.Conv3d(in_channels=3, out_channels=n_kernels >> 3, kernel_size=(1, 9, 9)),
-            torch.nn.Dropout(0.1),
+            torch.nn.Conv3d(in_channels=3, out_channels=16, kernel_size=(1, 7, 7), stride=(1, 3, 3)),
             torch.nn.ReLU(),
-            torch.nn.Conv3d(in_channels=n_kernels >> 3, out_channels=n_kernels >> 2, kernel_size=(1, 7, 7)),
+            torch.nn.BatchNorm3d(16),
+            torch.nn.Conv3d(16, 32, kernel_size=(1, 5, 5), stride=(1, 2, 2)),
             torch.nn.ReLU(),
-            torch.nn.MaxPool3d((1, 2, 2)),
-            torch.nn.Conv3d(in_channels=n_kernels >> 2, out_channels=n_kernels >> 1, kernel_size=(1, 5, 5)),
-            torch.nn.Dropout(0.1),
+            torch.nn.BatchNorm3d(32),
+            torch.nn.Conv3d(32, 64, kernel_size=(1, 3, 3), stride=(1, 1, 1)),
             torch.nn.ReLU(),
-            torch.nn.Conv3d(in_channels=n_kernels >> 1, out_channels=n_kernels, kernel_size=(1, 3, 3)),
             torch.nn.Flatten(),
         )
 
         self.middle = torch.nn.Sequential(
-            torch.nn.Linear(n_kernels * 36, n_hidden_nodes),
+            torch.nn.Linear(256, 128),
             torch.nn.ReLU(),
-            torch.nn.Linear(n_hidden_nodes, n_hidden_nodes >> 2),
+            torch.nn.Linear(128, 64),
             torch.nn.ReLU(),
-            torch.nn.Linear(n_hidden_nodes >> 2, n_hidden_nodes >> 3),
+            torch.nn.Linear(64, 32),
             torch.nn.ReLU()
         )
 
         self.head = torch.nn.Sequential(
-            torch.nn.Linear(n_hidden_nodes >> 3, 4)
+            torch.nn.Linear(32, 4)
         )
 
         self.value_head = torch.nn.Sequential(
-            torch.nn.Linear(n_hidden_nodes >> 3, 1)
+            torch.nn.Linear(32, 1)
         )
 
         self.backbone.to(self.device)
@@ -159,8 +155,9 @@ class Node:
 
     def get_next_action(self):
         A = np.argmax(self.proba)
-        self.proba[A] = 0.
-        return A
+        prob_A = self.proba[A]
+        self.proba[A] = -1000.
+        return A, prob_A
 
     def is_visited(self):
         return not np.count_nonzero(self.proba)
@@ -272,13 +269,11 @@ class Environment:
 
         if not self.current_node.has_proba():
             S = self.current_node.get_state()
-            preds, V = self.agent.predict(S)
-
-            self.current_node.V = V
+            preds = self.agent.predict(S)
             self.current_node.proba = preds
-            self.sum_V += V
 
-        A = self.current_node.get_next_action()
+        A, V = self.current_node.get_next_action()
+        self.current_node.V = V
 
         child = self.current_node.get_child(A)
         V = self.current_node.V
@@ -286,10 +281,10 @@ class Environment:
 
         self.history.append(pos)
 
-        if not self.current_node.is_visited() and V > 0:
+        if not self.current_node.is_visited():
             self.pq.append(self.current_node, V)
 
-        if not child.image_limit_attain() and V > 0:
+        if not child.image_limit_attain():
             self.pq.append(child, V)
 
         if self.current_node.is_visited:
@@ -315,7 +310,7 @@ class Environment:
         Vs = normalize(self.collection_V)
 
         predictions = []
-        idx = np.where(Vs >= self.threshold)[0]
+        idx = np.where(Vs >= -1)[0]
         for i in idx:
             X, pos = self.collection[i]
             self.model(X)
@@ -344,18 +339,17 @@ class Environment:
 
         blur = cv2.GaussianBlur(heat_map.astype(np.uint8), (3, 3), 3)
         heatmap_img = cv2.applyColorMap(blur, cv2.COLORMAP_JET)
+        heatmap_img = cv2.cvtColor(heatmap_img, cv2.COLOR_BGR2RGB)
         return cv2.addWeighted(heatmap_img, 0.4, hist_img, 0.6, 0)
 
 
 def dynamic_import(module_name, class_name):
     module = __import__(module_name)
-
     return getattr(module, class_name)
-
 
 class RTS:
 
-    def __init__(self, model, agent_weights_file="weights_rts.pth", collect=False, threshold=0.1):
+    def __init__(self, model, agent_weights_file="weights_rts.pth", collect=False, threshold=0.):
 
         file_dir = os.path.dirname(os.path.abspath(__file__))
         rts_dir = os.path.join(file_dir, 'weights', agent_weights_file)
@@ -385,7 +379,7 @@ class RTS:
         return predictions
 
 if __name__ == "__main__":
-    img = cv2.imread("test_img2.jpg")
+    img = cv2.imread("ele.jpg")
 
     model = dynamic_import("Dummy_model", "Dummy_model")()
 
@@ -403,6 +397,4 @@ if __name__ == "__main__":
     plt.imshow(rts.env.get_history_img(rts.env.history))
     plt.show()
 
-    plt.imshow(rts.env.get_history_img(pos))
-    plt.show()
 

@@ -15,7 +15,12 @@ if __name__ == '__main__':
     parser.add_argument('-o', '--results_path',
                         default=".",
                         help='the path where results will be saved')
-    parser.add_argument('-e', '--episodes', help=' number of episodes')
+    parser.add_argument('-e', '--episodes', help='number of episodes', default=500)
+    parser.add_argument('-eg', '--epsilon', help='epsilon parameter for the e-greedy function', default=0.1)
+    parser.add_argument('-a', '--learning_rate', help='learning rate parameter', default=0.0001)
+    parser.add_argument('-g', '--gamma', help='gamma parameter used for the discounted rewards', default=0.5)
+    parser.add_argument('-lrg', '--lr_gamma', help='learning rate drop ratio every 100 learning step', default=0.8)
+
 
     parser.add_argument("-rt", '--real_time_monitor', default=False, action="store_true")
     parser.add_argument("-plt", '--plot_metric', default=False, action="store_true")
@@ -23,7 +28,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    trainer = Trainer()
+    trainer = Trainer(float(args.epsilon), float(args.learning_rate), float(args.gamma), float(args.lr_gamma))
 
     print("[INFO] Training started")
     trainer.train(int(args.episodes),

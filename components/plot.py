@@ -30,39 +30,34 @@ class MetricMonitor:
         vs = [0]
         rewards = [0]
         losses = [0]
-        td_errors = [0]
         nb_actions = [0]
         app = dash.Dash(__name__)
         app.title = 'RTS learning realtime monitor'
 
         episodes = range(len(vs))
-        fig_v = px.line(x=episodes, y=vs, title='Mean state value (V)',
-                        labels=dict(x="Episodes", y="Mean of V"))
+        fig_g = px.line(x=episodes, y=vs, title='overall good action taken over bad.',
+                        labels=dict(x="Episodes", y="Good/Bad ratio"))
         fig_r = px.line(x=episodes, y=rewards, title='Rewards',
                         labels=dict(x="Episodes", y="Rewards"))
         fig_l = px.line(x=episodes, y=losses, title='Loss',
                         labels=dict(x="Episodes", y="Loss"))
-        fig_td = px.line(x=episodes, y=td_errors, title='TD error',
-                         labels=dict(x="Episodes", y="TDE"))
         fig_nb = px.line(x=episodes, y=nb_actions, title='Number of action took',
                          labels=dict(x="Episodes", y="NB actions"))
 
         app.layout = html.Div(
             [
-                dcc.Graph(id='fig_v', figure=fig_v),
+                dcc.Graph(id='fig_g', figure=fig_g),
                 dcc.Graph(id='fig_r', figure=fig_r),
                 dcc.Graph(id='fig_l', figure=fig_l),
-                dcc.Graph(id='fig_td', figure=fig_td),
                 dcc.Graph(id='fig_nb', figure=fig_nb),
                 dcc.Interval(id='graph-update', interval=10000, n_intervals=0)
             ]
         )
 
         @app.callback([
-            Output('fig_v', 'figure'),
+            Output('fig_g', 'figure'),
             Output('fig_r', 'figure'),
             Output('fig_l', 'figure'),
-            Output('fig_td', 'figure'),
             Output('fig_nb', 'figure')],
             [Input('graph-update', 'n_intervals')]
         )
@@ -73,30 +68,27 @@ class MetricMonitor:
                     vs.append(v)
                     rewards.append(r)
                     losses.append(l)
-                    td_errors.append(td)
                     nb_actions.append(nb)
                 except queue.Empty:
                     break
 
             episodes = range(len(vs))
-            fig_v = px.line(x=episodes, y=vs, title='Mean state value (V)',
+            fig_g = px.line(x=episodes, y=vs, title='Mean state value (V)',
                             labels=dict(x="Episodes", y="Mean of V"))
             fig_r = px.line(x=episodes, y=rewards, title='Rewards',
                             labels=dict(x="Episodes", y="Rewards"))
             fig_l = px.line(x=episodes, y=losses, title='Loss',
                             labels=dict(x="Episodes", y="Loss"))
-            fig_td = px.line(x=episodes, y=td_errors, title='TD error',
-                             labels=dict(x="Episodes", y="TDE"))
             fig_nb = px.line(x=episodes, y=nb_actions, title='Number of action took',
                              labels=dict(x="Episodes", y="NB actions"))
 
-            return fig_v, fig_r, fig_l, fig_td, fig_nb
+            return fig_g, fig_r, fig_l, fig_nb
 
         app.run()
 
-    def update_values(self, v, r, l, td, nb):
+    def update_values(self, v, r, l, nb):
         try:
-            self.q.put((v, r, l, td, nb), block=False)
+            self.q.put((v, r, l, nb), block=False)
         except queue.Full:
             pass
 
@@ -110,14 +102,21 @@ class MetricMonitor:
         self.server.start()
 
 
-def metrics_to_pdf(v, r, l, td, nb, nbc, mza, directory, stage):
+def metrics_to_pdf(g, r, l, nb, nbc, mza, directory, stage):
 
-    pp = PdfPages(directory + stage + "_V.pdf")
+    good = np.array(g)
+    bad = 1 - good
+    base = np.linspace(0, 1, len(good))
+
+    pp = PdfPages(directory + stage + "_Good.pdf")
     plt.clf()
-    plt.plot(v)
-    plt.title('Mean of state value during an episode')
+    plt.plot(base, good + bad, label="good hits", color='g')
+    plt.plot(base, bad, label="bad hits", color='r')
+    plt.fill_between(base, bad, good + bad, color='g', alpha=.5)
+    plt.fill_between(base, 0, bad, color='r', alpha=.5)
+    plt.title('Choice of good action over bad action')
     plt.xlabel('Episodes')
-    plt.ylabel('V')
+    plt.ylabel('Good/bad ratio')
     pp.savefig()
     pp.close()
 
@@ -139,15 +138,6 @@ def metrics_to_pdf(v, r, l, td, nb, nbc, mza, directory, stage):
     pp.savefig()
     pp.close()
 
-    pp = PdfPages(directory + stage + "_TDE.pdf")
-    plt.clf()
-    plt.plot(td)
-    plt.title('Mean of TD error during an episode')
-    plt.xlabel('Episodes')
-    plt.ylabel('TDE')
-    pp.savefig()
-    pp.close()
-
     pp = PdfPages(directory + stage + "_nb_steps.pdf")
     plt.clf()
     plt.plot(nb, label="agent")
@@ -161,13 +151,13 @@ def metrics_to_pdf(v, r, l, td, nb, nbc, mza, directory, stage):
     pp.close()
 
 
-def metrics_eval_to_pdf(v, r, nb, nbc, pertinence, precision, directory, stage):
+def metrics_eval_to_pdf(g, r, nb, nbc, pertinence, precision, directory, stage):
 
-    pp = PdfPages(directory + stage + "_V.pdf")
+    pp = PdfPages(directory + stage + "_Good.pdf")
     plt.clf()
-    plt.boxplot(v)
-    plt.title('Mean of state value during an episode')
-    plt.ylabel('V')
+    plt.boxplot(g)
+    plt.title('Choice of good action over bad action')
+    plt.ylabel('Good/Bad ratio')
     pp.savefig()
     pp.close()
 
