@@ -12,7 +12,8 @@ import gc
 from matplotlib import pyplot as plt
 
 MODEL_RES = 64
-TASK_MODEL_RES = 100
+TASK_MODEL_RES = 224
+HIST_RES = 200
 
 
 class PriorityQueue(object):
@@ -55,7 +56,7 @@ class Node:
         self.x = x
         self.y = y
         self.proba = None
-        self.V = None
+        self.V = 1.
         self.nb_children = 0
 
     def get_state(self):
@@ -107,10 +108,13 @@ class Environment:
     """
 
     def __init__(self, epsilon):
+
+        self.nb_max_conv_action = None
+        self.count_per_action = None
+        self.history = None
         self.min_res = None
         self.min_zoom_action = None
         self.objects_coordinates = None
-        self.nb_max_conv_action = None
         self.full_img = None
         self.dim = None
         self.pq = None
@@ -133,11 +137,16 @@ class Environment:
         :return: the current state of the environment.
         """
         self.objects_coordinates = []
+        self.history = []
+        self.count_per_action = np.zeros(4)
         self.prepare_img(img)
         self.prepare_coordinates(bb)
-
+        self.marked = np.zeros(len(self.objects_coordinates))
         self.pq = PriorityQueue()
         self.nb_actions_taken = 0
+        self.conventional_policy_nb_step_per_object = np.zeros(len(self.objects_coordinates))
+        self.conventional_policy_nb_step = 0.
+
         self.min_zoom_action = 0
         self.good_hits = 0
         self.current_node = Node(self.full_img, (0, 0), -1, self.nb_actions_taken)
@@ -171,8 +180,8 @@ class Environment:
         for line in lines:
             if line is not None:
                 values = line.split()
-                self.objects_coordinates.append((float(values[0]), float(values[1]),
-                                                 float(values[2]), float(values[3])))
+                self.objects_coordinates.append((float(values[1]), float(values[2]),
+                                                 float(values[3]), float(values[4])))
 
     def follow_policy(self, probs):
         p = random.random()
@@ -185,7 +194,7 @@ class Environment:
         probs[A] = -1000.
         self.current_node.proba = probs
         self.current_node.V = V
-        return A
+        return A, V
 
     def exploit(self, probs):
         A = np.argmax(probs)
@@ -193,16 +202,15 @@ class Environment:
         probs[A] = -1000.
         self.current_node.proba = probs
         self.current_node.V = V
-        return A
+        return A, V
 
     def calc_conventional_policy_step(self, x, y):
-
         nb_line = self.dim / self.min_res
         nb_col = int(x / self.min_res)
         last = int(y / self.min_res)
-        self.conventional_policy_nb_step = nb_line * nb_col + last + 1
+        return nb_line * nb_col + last + 1
 
-    def sub_img_contain_object(self, x, y, window):
+    def sub_img_contain_object(self, x, y, window, mark=False):
         """
         This method allow the user to know if the current subgrid contain charlie or not
         :return: true if the sub grid contains charlie.
@@ -211,6 +219,9 @@ class Environment:
         for i, coordinate in enumerate(self.objects_coordinates):
             o_x, o_y, o_w, o_h = coordinate
             iou = self.intersection_over_union((x, y, window, window), (o_x, o_y, o_w, o_h))
+            if iou > 0 and mark:
+                if not self.marked[i]:
+                    self.marked[i] = self.nb_actions_taken
             if iou > max_iou:
                 max_iou = iou
         return max_iou
@@ -243,7 +254,9 @@ class Environment:
         # return the intersection over union value
         return iou
 
-    def take_action(self, action):
+    def take_action(self, action, Q):
+
+        self.count_per_action[action] += 1
 
         reward = 0.
         self.nb_actions_taken += 1
@@ -253,14 +266,15 @@ class Environment:
         current_n = self.current_node.number
 
         child = self.current_node.get_child(action, self.nb_actions_taken)
+        self.history.append((child.x, child.y, child.img.shape[0], Q))
 
         node_info = (parent_n, current_n, self.nb_actions_taken)
 
         if self.current_node.nb_children < 4:
-            self.pq.append(self.current_node, self.current_node.V)
+            self.pq.append(self.current_node, Q)
 
-        if not child.image_limit_attain():
-            self.pq.append(child, self.current_node.V)
+        if not child.image_limit_attain() and not np.all(child.resized_img == 0):
+            self.pq.append(child, Q)
 
         if self.current_node.nb_children >= 4:
             del self.current_node
@@ -270,17 +284,22 @@ class Environment:
 
         if child.image_limit_attain():
             self.min_zoom_action += 1
-            if self.sub_img_contain_object(child.x, child.y, child.img.shape[0]):
-                reward = 100
-                is_terminal = True
+            if self.sub_img_contain_object(child.x, child.y, child.img.shape[0], mark=True):
+                reward = 10.
             else:
                 reward = -1.
 
         if self.sub_img_contain_object(child.x, child.y, child.img.shape[0]):
             self.good_hits += 1
 
-        if is_terminal:
-            self.calc_conventional_policy_step(child.x, child.y)
+        if np.all(self.marked > 0):
+            for i, coordinate in enumerate(self.objects_coordinates):
+                o_x, o_y, _, _ = coordinate
+                conv_action = self.calc_conventional_policy_step(o_x, o_y)
+                self.conventional_policy_nb_step_per_object[i] = conv_action
+            if len(self.conventional_policy_nb_step_per_object):
+                self.conventional_policy_nb_step = np.max(self.conventional_policy_nb_step_per_object)
+            is_terminal = True
 
         if not self.pq.isEmpty():
             self.current_node = self.pq.pop()
@@ -289,3 +308,34 @@ class Environment:
         S_prime = self.current_node.get_state()
 
         return S_prime, reward, is_terminal, node_info, self.current_node.proba
+
+    def get_gif_trajectory(self, name):
+        """
+        This function allow the user to create a gif of all the moves the
+        agent has made along the episodes
+        :param name: the name of the gif file
+        """
+        frames = []
+        H, W, channels = self.full_img.shape
+        ratio = HIST_RES / max(H, W)
+        hist_img = cv2.resize(self.full_img, (HIST_RES, HIST_RES))
+        for step in self.history:
+            hist_frame = hist_img.copy()
+            x, y, window, Q = step
+            x *= ratio
+            y *= ratio
+            window *= ratio
+            x = int(x)
+            y = int(y)
+            window = int(window)
+
+            if Q > 1.:
+                Q = 1.
+            elif Q < 0.:
+                Q = 0.
+
+            hist_frame[y:window + y, x: window + x] = [int(255 * Q / 100.), 0, int(255 * (1. - Q / 100.))]
+
+            frames.append(hist_frame)
+
+        imageio.mimsave(name, frames, duration=0.2)

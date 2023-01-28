@@ -6,6 +6,7 @@ import numpy as np
 from tqdm import tqdm
 
 from components.agent import PolicyGradient
+from components.dummy_agent import DummyAgent
 from components.environment import Environment
 from components.plot import MetricMonitor, metrics_to_pdf, metrics_eval_to_pdf
 
@@ -29,6 +30,7 @@ class Trainer:
         self.img_list = None
         self.env = Environment(epsilon=epsilon)
         self.agent = PolicyGradient(self.env, learning_rate=learning_rate, gamma=gamma, lr_gamma=lr_gamma)
+        self.dummy = DummyAgent(self.env)
 
     def train(self, nb_episodes, train_path, result_path='.',
               real_time_monitor=False, plot_metric=False, transfer_learning=False):
@@ -55,7 +57,6 @@ class Trainer:
         # for plotting
         losses = []
         rewards = []
-        good_hits_ratio = []
         nb_action = []
         nb_conv_action = []
         nb_min_zoom_action = []
@@ -83,13 +84,10 @@ class Trainer:
                 nb_conv_action.append(self.env.conventional_policy_nb_step)
                 nb_min_zoom_action.append(self.env.min_zoom_action)
 
-                good_hits = self.env.good_hits / st
-                good_hits_ratio.append(good_hits)
-
                 if real_time_monitor:
                     metric_monitor.update_values(st, sum_reward, loss , st)
 
-                episode.set_postfix(rewards=sum_reward, loss=loss, nb_action=st, good_hits_ratio=good_hits)
+                episode.set_postfix(loss=loss, nb_action=st)
 
         # --------------------------------------------------------------------------------------------------------------
         # PLOT AND WEIGHTS SAVING
@@ -116,7 +114,7 @@ class Trainer:
         except OSError as error:
             print(error)
         # saving the model weights
-        self.agent.save(os.path.join(path_weights, "weights_rts.pth"))
+        self.agent.save(os.path.join(path_weights, "weights_rts.pt"))
 
         if plot_metric:
             path_plot = os.path.join(path, "plot/")
@@ -124,7 +122,7 @@ class Trainer:
                 os.mkdir(path_plot)
             except OSError as error:
                 print(error)
-            metrics_to_pdf(good_hits_ratio, rewards, losses,
+            metrics_to_pdf(rewards, losses,
                            nb_action, nb_conv_action, nb_min_zoom_action,
                            path_plot, "training")
 
@@ -140,9 +138,25 @@ class Trainer:
         rewards = []
         good_hits_ratio = []
         nb_action = []
+        nb_action_min = []
         nb_conv_action = []
+        nb_action_dummy = []
+        nb_action_min_dummy = []
         precision = []
         pertinence = []
+        count_per_action = []
+        hist_agent = []
+        hist_conv = []
+        hist_dummy = []
+
+        if plot_metric:
+            path = os.path.join(result_path, "rts_runs/evaluation")
+            path_plot = os.path.join(path, "plot/")
+            try:
+                os.mkdir(path)
+                os.mkdir(path_plot)
+            except OSError as error:
+                print(error)
 
         # --------------------------------------------------------------------------------------------------------------
         # EVALUATION STEPS
@@ -158,9 +172,13 @@ class Trainer:
                 first_state = self.env.reload_env(img, bb)
                 sum_reward = self.agent.exploit_one_episode(first_state)
                 st = self.env.nb_actions_taken
+                stm = self.env.min_zoom_action
+
                 rewards.append(sum_reward)
                 nb_action.append(st)
+                nb_action_min.append(stm)
                 nb_conv_action.append(self.env.conventional_policy_nb_step)
+                count_per_action.append(self.env.count_per_action)
 
                 pr = self.env.min_zoom_action / self.env.nb_max_conv_action
                 prc = self.env.conventional_policy_nb_step / self.env.nb_max_conv_action
@@ -170,31 +188,60 @@ class Trainer:
                 good_hits = self.env.good_hits / st
                 good_hits_ratio.append(good_hits)
 
+                hist_agent.extend((self.env.marked / 10).astype(int).tolist())
+                hist_conv.extend((self.env.conventional_policy_nb_step_per_object / 10).astype(int).tolist())
+
+                if i % 3 == 0 and plot_metric:
+                    self.env.get_gif_trajectory(os.path.join(result_path, "rts_runs/evaluation", img_filename + ".gif"))
+
                 episode.set_postfix(rewards=sum_reward, nb_action=st, good_hits_ratio=good_hits)
+
+        with tqdm(range(len(self.img_list)), unit="episode") as episode:
+            for i in episode:
+                img_filename = self.img_list[i]
+                img = os.path.join(self.img_path, img_filename)
+                bb = os.path.join(self.label_path, img_filename[:-4] + '.txt')
+                if not os.path.exists(bb):
+                    continue
+
+                self.env.reload_env(img, bb)
+                self.dummy.exploit_one_episode()
+                st = self.env.nb_actions_taken
+                stm = self.env.min_zoom_action
+                nb_action_dummy.append(st)
+                nb_action_min_dummy.append(stm)
+
+                hist_dummy.extend((self.env.marked / 10).astype(int).tolist())
+
+                episode.set_postfix(nb_action=st)
 
         # --------------------------------------------------------------------------------------------------------------
         # PLOT
         # --------------------------------------------------------------------------------------------------------------
-        print("")
+        print("Steps taken")
+        print("-------------------------------")
+        describe(nb_action)
+        print("-------------------------------\n")
+
+        print("Means per actions")
+        count_per_action = np.array(count_per_action)
+        count_per_action_mean = np.mean(count_per_action, axis=0)
+        print(count_per_action_mean)
+        print("-------------------------------")
+        describe(count_per_action_mean)
+        print("-------------------------------\n")
+
         print("Overall precision on evaluation")
         print("-------------------------------")
         describe(precision)
-        print("-------------------------------")
+        print("-------------------------------\n")
 
-        print("")
         print("Overall pertinence on evaluation")
         print("-------------------------------")
         describe(pertinence)
         print("-------------------------------")
 
         if plot_metric:
-            path = os.path.join(result_path, "rts_runs/evaluation")
-            path_plot = os.path.join(path, "plot/")
-            try:
-                os.mkdir(path)
-                os.mkdir(path_plot)
-            except OSError as error:
-                print(error)
-
-            metrics_eval_to_pdf(good_hits_ratio, rewards, nb_action, nb_conv_action,
-                                pertinence, precision, path_plot, "evaluation")
+            metrics_eval_to_pdf(good_hits_ratio, rewards, nb_action, nb_action_min, nb_conv_action, nb_action_dummy,
+                                nb_action_min_dummy, pertinence, precision, hist_agent, hist_conv, hist_dummy,
+                                path_plot, "evaluation")

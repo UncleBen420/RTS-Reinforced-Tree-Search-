@@ -16,20 +16,21 @@ class PolicyNet(nn.Module):
         self.sub_img_res = int(self.img_res / 2)
 
         self.backbone = torch.nn.Sequential(
-            torch.nn.Conv3d(in_channels=3, out_channels=16, kernel_size=(1, 7, 7), stride=(1, 3, 3)),
+            torch.nn.Conv2d(in_channels=3, out_channels=16, kernel_size=(7, 7), stride=( 3, 3)),
             torch.nn.ReLU(),
-            torch.nn.BatchNorm3d(16),
-            torch.nn.Conv3d(16, 32, kernel_size=(1, 5, 5), stride=(1, 2, 2)),
+            torch.nn.BatchNorm2d(16),
+            torch.nn.Conv2d(16, 32, kernel_size=(5, 5), stride=(2, 2)),
             torch.nn.ReLU(),
-            torch.nn.BatchNorm3d(32),
-            torch.nn.Conv3d(32, 64, kernel_size=(1, 3, 3), stride=(1, 1, 1)),
+            torch.nn.BatchNorm2d(32),
+            torch.nn.Conv2d(32, 64, kernel_size=(3, 3), stride=(2, 2)),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(64, 128, kernel_size=(3, 3)),
             torch.nn.ReLU(),
             torch.nn.Flatten(),
         )
 
         self.head = torch.nn.Sequential(
-            torch.nn.Linear(256, 128),
-            torch.nn.ReLU(),
+
             torch.nn.Linear(128, 64),
             torch.nn.ReLU(),
             torch.nn.LayerNorm(64),
@@ -50,11 +51,7 @@ class PolicyNet(nn.Module):
 
     def prepare_data(self, state):
         img = state.permute(0, 3, 1, 2)
-        patches = img.unfold(1, 3, 3).unfold(2, self.sub_img_res, self.sub_img_res).unfold(3, self.sub_img_res,
-                                                                                           self.sub_img_res)
-        patches = patches.contiguous().view(1, 4, -1, self.sub_img_res, self.sub_img_res)
-        patches = patches.permute(0, 2, 1, 3, 4)
-        return patches
+        return img
 
     def forward(self, state):
         x = self.backbone(state)
@@ -64,7 +61,7 @@ class PolicyNet(nn.Module):
 class PolicyGradient:
 
     def __init__(self, environment, learning_rate=0.0001, gamma=0.5,
-                 lr_gamma=0.7, pa_dataset_size=1000, pa_batch_size=300, img_res=64):
+                 lr_gamma=0.7, pa_dataset_size=5000, pa_batch_size=300, img_res=64):
 
         self.gamma = gamma
         self.environment = environment
@@ -109,7 +106,6 @@ class PolicyGradient:
         # Calculate loss
         self.optimizer.zero_grad()
         action_probs = self.policy(S)
-        action_probs = torch.nn.functional.softmax(action_probs, dim=1)
 
         selected = torch.gather(action_probs, 1, A.unsqueeze(1))
         loss = torch.nn.functional.mse_loss(selected.squeeze(), G)
@@ -169,9 +165,9 @@ class PolicyGradient:
             else:
                 action_probs = existing_proba
 
-            A = self.environment.follow_policy(action_probs)
+            A, Q = self.environment.follow_policy(action_probs)
 
-            S_prime, R, is_terminal, node_info, existing_proba = self.environment.take_action(A)
+            S_prime, R, is_terminal, node_info, existing_proba = self.environment.take_action(A, Q)
             parent, current, child = node_info
 
             S_batch.append(S)
@@ -201,16 +197,16 @@ class PolicyGradient:
         # ------------------------------------------------------------------------------------------------------
 
         # Add some experiences to the buffer with respect of TD error
-        nb_new_memories = min(100, counter)
+        nb_new_memories = int(counter / 4)
 
-        #idx = torch.randperm(len(A_batch))[:nb_new_memories]
-        #idx = torch.multinomial(1 - TDE_batch, nb_new_memories)
-        weights = G_batch
-        self.min_r = torch.min(weights)
-        self.max_r = torch.max(weights)
-        weights = (weights - self.min_r) / (self.max_r - self.min_r)
+        if nb_new_memories == 0:
+            loss = self.update_policy()
+            return loss, sum_reward
+
+        weights = G_batch + abs(G_batch.min().item()) + 1
         weights /= weights.sum()
         idx = torch.multinomial(weights, nb_new_memories)
+
 
         if self.A_pa_batch is None:
             self.A_pa_batch = A_batch[idx]
@@ -258,8 +254,8 @@ class PolicyGradient:
             else:
                 action_probs = existing_proba
 
-            A = self.environment.follow_policy(action_probs)
-            S_prime, R, is_terminal, _, existing_proba = self.environment.take_action(A)
+            A, Q = self.environment.follow_policy(action_probs)
+            S_prime, R, is_terminal, _, existing_proba = self.environment.take_action(A, Q)
 
             sum_reward += R
 

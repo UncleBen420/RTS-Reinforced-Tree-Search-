@@ -102,23 +102,7 @@ class MetricMonitor:
         self.server.start()
 
 
-def metrics_to_pdf(g, r, l, nb, nbc, mza, directory, stage):
-
-    good = np.array(g)
-    bad = 1 - good
-    base = np.linspace(0, 1, len(good))
-
-    pp = PdfPages(directory + stage + "_Good.pdf")
-    plt.clf()
-    plt.plot(base, good + bad, label="good hits", color='g')
-    plt.plot(base, bad, label="bad hits", color='r')
-    plt.fill_between(base, bad, good + bad, color='g', alpha=.5)
-    plt.fill_between(base, 0, bad, color='r', alpha=.5)
-    plt.title('Choice of good action over bad action')
-    plt.xlabel('Episodes')
-    plt.ylabel('Good/bad ratio')
-    pp.savefig()
-    pp.close()
+def metrics_to_pdf(r, l, nb, nbc, mza, directory, stage):
 
     pp = PdfPages(directory + stage + "_R.pdf")
     plt.clf()
@@ -151,7 +135,7 @@ def metrics_to_pdf(g, r, l, nb, nbc, mza, directory, stage):
     pp.close()
 
 
-def metrics_eval_to_pdf(g, r, nb, nbc, pertinence, precision, directory, stage):
+def metrics_eval_to_pdf(g, r, nb, nbm, nbc, nbd, nbdm, pertinence, precision, ha, hc, hd, directory, stage):
 
     pp = PdfPages(directory + stage + "_Good.pdf")
     plt.clf()
@@ -171,8 +155,9 @@ def metrics_eval_to_pdf(g, r, nb, nbc, pertinence, precision, directory, stage):
 
     pp = PdfPages(directory + stage + "_nb_steps.pdf")
     plt.clf()
-    labels = ["agent", "conventional policy"]
-    plt.boxplot([nb, nbc], labels=labels)
+    labels = ["agent", "agent zm", "conv policy", "random", "random zm"]
+
+    plt.boxplot([nb, nbm, nbc, nbd, nbdm], labels=labels)
     plt.title('Number of steps during each episodes')
     plt.ylabel('Steps')
     pp.savefig()
@@ -181,7 +166,7 @@ def metrics_eval_to_pdf(g, r, nb, nbc, pertinence, precision, directory, stage):
     pp = PdfPages(directory + stage + "_precision.pdf")
     plt.clf()
     plt.boxplot(precision)
-    plt.title('precision of the guess on the object position')
+    plt.title('Precision of the guess on the object position')
     plt.ylabel('precision')
     pp.savefig()
     pp.close()
@@ -189,7 +174,35 @@ def metrics_eval_to_pdf(g, r, nb, nbc, pertinence, precision, directory, stage):
     pp = PdfPages(directory + stage + "_pertinence.pdf")
     plt.clf()
     plt.boxplot(pertinence)
-    plt.title('pertinence of using rts over a conventional policy')
+    plt.title('Pertinence of using rts over a conventional policy')
     plt.ylabel('pertinence')
+    pp.savefig()
+    pp.close()
+
+    pp = PdfPages(directory + stage + "_rep.pdf")
+    plt.clf()
+    plt.title('Repartition of the number of step to find an object')
+    fig, axs = plt.subplots(3, figsize=(10, 7), tight_layout=False)
+
+    _, max_val = np.unique(ha, return_counts=True)
+    max_val = max_val.max()
+
+    axs[0].hist(ha, label='agent')
+    axs[0].set(ylim=(0, max_val * 2))
+    axs[0].set_xlabel("number of steps")
+    axs[0].set_ylabel("objects found")
+    axs[0].legend()
+
+    axs[1].hist(hc, label='conv policy')
+    axs[1].set(ylim=(0, max_val * 2))
+    axs[1].set_xlabel("number of steps")
+    axs[1].set_ylabel("objects found")
+    axs[1].legend()
+
+    axs[2].hist(hd, label='random')
+    axs[2].set(ylim=(0, max_val * 2))
+    axs[2].set_xlabel("number of steps")
+    axs[2].set_ylabel("objects found")
+    axs[2].legend()
     pp.savefig()
     pp.close()
