@@ -14,9 +14,10 @@ from tqdm import tqdm
 def get_model(device):
 	# initialize the LeNet model
 	print("[INFO] initializing the ResNet50 model...")
-	model = torchvision.models.resnet50(weights=torchvision.models.ResNet50_Weights.DEFAULT).to(device)
+	model = torchvision.models.resnet50(weights=torchvision.models.ResNet50_Weights.DEFAULT)
 	num_ftrs = model.fc.in_features
 	model.fc = torch.nn.Linear(num_ftrs, 5)  # there is 5 classes
+	model = model.to(device)
 
 	return model
 
@@ -29,7 +30,7 @@ def eval(val_dir, model, device):
 	])
 
 	val_ds = NOAADataset(val_dir, transforms=preprocess)
-	batch_size = 128
+	batch_size = 16
 	val_dl = DataLoader(val_ds, batch_size, pin_memory=True)
 
 	lossFn = torch.nn.MSELoss()
@@ -67,7 +68,7 @@ def train(train_dir, model, epochs, device):
 	# load the train and test data
 	train_ds = NOAADataset(train_dir, transforms=preprocess_and_augmentation)
 
-	batch_size = 128
+	batch_size = 16
 
 	# load the train and validation into batches.
 	train_dl = DataLoader(train_ds, batch_size, shuffle=True, pin_memory=True)
@@ -83,14 +84,14 @@ def train(train_dir, model, epochs, device):
 
 	# loop over our epochs
 	model.train()
-	for e in range(0, epochs):
+	with tqdm(range(epochs), unit="epochs") as epochs:
+		for e in epochs:
 
-		# initialize the total training and validation loss
-		total_train_loss = 0
+			# initialize the total training and validation loss
+			total_train_loss = 0
 
-		val_index = random.randint(0, len(train_dl) - 1)
-		with tqdm(enumerate(train_dl), unit="epochs") as epochs:
-			for i, (x, y) in epochs:
+			val_index = random.randint(0, len(train_dl) - 1)
+			for i, (x, y) in enumerate(train_dl):
 
 				if i != val_index:
 
@@ -109,11 +110,11 @@ def train(train_dir, model, epochs, device):
 
 					with torch.no_grad():
 						pred = model(x.to(device))
-						test_loss = lossFn(pred, y.to(device))
+						test_loss = lossFn(pred, y.to(device)).item()
 
-				epochs.set_postfix(loss=total_train_loss, test_loss=test_loss)
+			epochs.set_postfix(loss=total_train_loss / (len(train_dl) - 1), test_loss=test_loss)
 
-		H["test_loss"].append(test_loss.item())
-		H["train_loss"].append(total_train_loss / len(train_dl) - 1)
+			H["test_loss"].append(test_loss)
+			H["train_loss"].append(total_train_loss / (len(train_dl) - 1))
 
 	return H, model
