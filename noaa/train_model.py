@@ -11,13 +11,14 @@ from torch.utils.data.dataloader import DataLoader
 from tqdm import tqdm
 
 
-def get_model(device):
+def get_model(device, weights=torchvision.models.ResNet50_Weights.DEFAULT):
 	# initialize the LeNet model
 	print("[INFO] initializing the ResNet50 model...")
-	model = torchvision.models.resnet50(weights=torchvision.models.ResNet50_Weights.DEFAULT)
+	model = torchvision.models.resnet50(weights=weights)
 	num_ftrs = model.fc.in_features
 	model.fc = torch.nn.Linear(num_ftrs, 5)  # there is 5 classes
 	model = model.to(device)
+	print("[INFO] Done")
 
 	return model
 

@@ -1,6 +1,5 @@
 import argparse
 import os
-
 import cv2
 import time
 import numpy as np
@@ -352,13 +351,12 @@ class RTS:
         self.env.reload_env(X)
 
         predictions = {}
-
         while True:
             is_terminal, prediction = self.env.next_step()
             if prediction is not None:
                 pos, model_pred = prediction
                 x, y, window, Q = pos
-                predictions[(x, y, window)] = (Q, model_pred)
+                predictions[(x, y, window)] = model_pred
 
             if is_terminal:
                 break
