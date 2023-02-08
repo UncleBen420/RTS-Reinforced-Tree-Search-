@@ -8,7 +8,6 @@ import re
 import cv2
 import imageio
 import numpy as np
-import gc
 from matplotlib import pyplot as plt
 
 MODEL_RES = 64

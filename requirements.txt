@@ -1,0 +1,9 @@
+numpy
+torch
+opencv-python
+sklearn
+tqdm
+matplotlib
+imageio
+flask
+dash
