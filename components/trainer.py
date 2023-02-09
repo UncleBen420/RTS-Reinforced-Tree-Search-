@@ -7,6 +7,7 @@ from tqdm import tqdm
 from components.agent import PolicyGradient
 from components.dummy_agent import DummyAgent
 from components.environment import Environment
+import environment
 from components.plot import MetricMonitor, metrics_to_pdf, metrics_eval_to_pdf
 
 
@@ -22,11 +23,12 @@ def describe(arr):
 
 
 class Trainer:
-    def __init__(self, epsilon, learning_rate, gamma, lr_gamma):
+    def __init__(self, epsilon, learning_rate, gamma, lr_gamma, min_res):
         self.label_path = None
         self.img_path = None
         self.label_list = None
         self.img_list = None
+        environment.TASK_MODEL_RES = min_res
         self.env = Environment(epsilon=epsilon)
         self.agent = PolicyGradient(self.env, learning_rate=learning_rate, gamma=gamma, lr_gamma=lr_gamma)
         self.dummy = DummyAgent(self.env)

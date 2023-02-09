@@ -20,22 +20,23 @@ if __name__ == '__main__':
     parser.add_argument('-a', '--learning_rate', help='learning rate parameter', default=0.00005)
     parser.add_argument('-g', '--gamma', help='gamma parameter used for the discounted rewards', default=0.08)
     parser.add_argument('-lrg', '--lr_gamma', help='learning rate drop ratio every 100 learning step', default=1.)
-    parser.add_argument("-rt", '--real_time_monitor', default=False, action="store_true")
-    parser.add_argument("-plt", '--plot_metric', default=False, action="store_true")
-    parser.add_argument("-tl", '--transfer_learning', default=None)
+    parser.add_argument('-res', '--min_resolution', help='resolution at the maximum zoom', default=224)
+    parser.add_argument('-rt', '--real_time_monitor', default=False, action="store_true")
+    parser.add_argument('-plt', '--plot_metric', default=False, action="store_true")
+    parser.add_argument('-tl', '--transfer_learning', default=None)
 
     args = parser.parse_args()
 
     trainer = Trainer(float(args.epsilon), float(args.learning_rate),
-                      float(args.gamma), float(args.lr_gamma))
+                      float(args.gamma), float(args.lr_gamma), int(args.min_resolution))
 
     print("[INFO] Training started")
-    #trainer.train(int(args.episodes),
-    #              args.train_path,
-    #              args.results_path,
-    #              real_time_monitor=args.real_time_monitor,
-    #              plot_metric=args.plot_metric,
-    #              transfer_learning=args.transfer_learning)
+    trainer.train(int(args.episodes),
+                  args.train_path,
+                  args.results_path,
+                  real_time_monitor=args.real_time_monitor,
+                  plot_metric=args.plot_metric,
+                  transfer_learning=args.transfer_learning)
 
     trainer.agent.load("rts_runs/training/weights/weights_rts.pt")
 

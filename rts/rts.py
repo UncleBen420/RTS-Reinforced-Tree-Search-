@@ -369,15 +369,15 @@ class RTS:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description='This program allow user to train RTS on a object detection dataset')
+        description='This program allow user to use RTS bounded with YOLO v5n to search on a image')
     parser.add_argument('-img', '--image_path',
-                        help='the path to the data. it must contains a images and a labels folder')
+                        help='the path to the image that will be analyzed')
     parser.add_argument('-max', '--max_actions_allowed', default=100,
-                        help='the path to the data. it must contains a images and a labels folder')
+                        help='the maximal number of actions allowed to be perform by RTS')
     parser.add_argument('-yolo', '--yolo_weights', default="yolo_weights.pt",
-                        help='the path to the data. it must contains a images and a labels folder')
+                        help='the name of the yolo weights file (default: yolo_weights.pt)')
     parser.add_argument('-rts', '--rts_weights', default="weights_rts.pt",
-                        help='the path to the data. it must contains a images and a labels folder')
+                        help='the name of the rts weights file (default: weights_rts.pt)')
 
 
     args = parser.parse_args()
