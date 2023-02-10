@@ -1,7 +1,3 @@
-import threading
-import time
-from flask import request
-
 import dash
 from dash.dependencies import Output, Input
 from dash import dcc
@@ -20,23 +16,25 @@ log.setLevel(logging.ERROR)
 
 
 class MetricMonitor:
-
+    """
+    Class implementing a dash server monitoring the learning phase of RTS.
+    """
     def __init__(self):
         self.server = None
         self.q = None
 
     def work(self, q):
-
-        vs = [0]
+        """
+        work of the thread use to run the dash server.
+        @param q: the shared queue between the server thread and the original process.
+        """
         rewards = [0]
         losses = [0]
         nb_actions = [0]
         app = dash.Dash(__name__)
         app.title = 'RTS learning realtime monitor'
 
-        episodes = range(len(vs))
-        fig_g = px.line(x=episodes, y=vs, title='overall good action taken over bad.',
-                        labels=dict(x="Episodes", y="Good/Bad ratio"))
+        episodes = range(len(rewards))
         fig_r = px.line(x=episodes, y=rewards, title='Rewards',
                         labels=dict(x="Episodes", y="Rewards"))
         fig_l = px.line(x=episodes, y=losses, title='Loss',
@@ -46,7 +44,6 @@ class MetricMonitor:
 
         app.layout = html.Div(
             [
-                dcc.Graph(id='fig_g', figure=fig_g),
                 dcc.Graph(id='fig_r', figure=fig_r),
                 dcc.Graph(id='fig_l', figure=fig_l),
                 dcc.Graph(id='fig_nb', figure=fig_nb),
@@ -55,26 +52,25 @@ class MetricMonitor:
         )
 
         @app.callback([
-            Output('fig_g', 'figure'),
             Output('fig_r', 'figure'),
             Output('fig_l', 'figure'),
             Output('fig_nb', 'figure')],
             [Input('graph-update', 'n_intervals')]
         )
         def update_graph_scatter(n):
+            """
+            Update the graph.
+            """
             while True:
                 try:
-                    v, r, l, td, nb = q.get(block=False)
-                    vs.append(v)
+                    r, l, nb = q.get(block=False)
                     rewards.append(r)
                     losses.append(l)
                     nb_actions.append(nb)
                 except queue.Empty:
                     break
 
-            episodes = range(len(vs))
-            fig_g = px.line(x=episodes, y=vs, title='Mean state value (V)',
-                            labels=dict(x="Episodes", y="Mean of V"))
+            episodes = range(len(rewards))
             fig_r = px.line(x=episodes, y=rewards, title='Rewards',
                             labels=dict(x="Episodes", y="Rewards"))
             fig_l = px.line(x=episodes, y=losses, title='Loss',
@@ -82,28 +78,39 @@ class MetricMonitor:
             fig_nb = px.line(x=episodes, y=nb_actions, title='Number of action took',
                              labels=dict(x="Episodes", y="NB actions"))
 
-            return fig_g, fig_r, fig_l, fig_nb
+            return fig_r, fig_l, fig_nb
 
         app.run()
 
-    def update_values(self, v, r, l, nb):
+    def update_values(self, r, l, nb):
+        """
+        Append an element the shared queue.
+        """
         try:
-            self.q.put((v, r, l, nb), block=False)
+            self.q.put((r, l, nb), block=False)
         except queue.Full:
             pass
 
     def stop_server(self):
+        """
+        Stop the running server
+        """
         self.server.terminate()
         self.server.join()
 
     def start_server(self):
+        """
+        Start a dash server.
+        """
         self.q = Queue()
         self.server = Process(target=self.work, args=(self.q,))
         self.server.start()
 
 
 def metrics_to_pdf(r, l, nb, nbc, mza, directory, stage):
-
+    """
+    This function plot the metrics in several .pdf files.
+    """
     pp = PdfPages(directory + stage + "_R.pdf")
     plt.clf()
     plt.plot(r)
@@ -136,7 +143,9 @@ def metrics_to_pdf(r, l, nb, nbc, mza, directory, stage):
 
 
 def metrics_eval_to_pdf(g, r, nb, nbm, nbc, nbd, nbdm, pertinence, precision, ha, hc, hd, directory, stage):
-
+    """
+    This function plot the metrics of evaluation in several .pdf files.
+    """
     pp = PdfPages(directory + stage + "_Good.pdf")
     plt.clf()
     plt.boxplot(g)

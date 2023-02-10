@@ -1,8 +1,7 @@
 """
-The goal of this program is to allow user to evaluate 3 different RL algorithm on the dummy environment.
+Allow user to train and evaluate RTS on a dataset of high resolution images.
 """
 import argparse
-
 from components.trainer import Trainer
 
 if __name__ == '__main__':

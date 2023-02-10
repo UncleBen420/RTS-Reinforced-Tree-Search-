@@ -7,16 +7,19 @@ import torch
 from torch import nn
 
 AGENT_RES = 64
-MODEL_RES = 400
-LIMIT_RES = 224
 
 class YoloWrapper:
-
+    """
+    This class implement a wrapper for YOLO v5n. It allows it to be use wth RTS.
+    """
     def __init__(self, model, return_img=False):
         self.model = model
         self.return_img = return_img
 
     def __call__(self, img):
+        """
+        Redefinition of the __call__ to call YOLO.
+        """
         result = self.model([img]).xyxy[0].cpu().numpy()
         detected = len(result) > 0
 
@@ -34,9 +37,9 @@ class YoloWrapper:
         return result, detected, img
 
 
-class PolicyNet(nn.Module):
+class QNet(nn.Module):
     def __init__(self, img_res=64):
-        super(PolicyNet, self).__init__()
+        super(QNet, self).__init__()
 
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -85,7 +88,7 @@ class PolicyNet(nn.Module):
 class Agent:
 
     def __init__(self, img_res=64):
-        self.policy = PolicyNet(img_res=img_res)
+        self.policy = QNet(img_res=img_res)
 
     def load(self, weights):
         self.policy.load_state_dict(torch.load(weights))
@@ -112,6 +115,9 @@ class Agent:
 
 
 class PriorityQueue(object):
+    """
+    Class implementing a priority queue
+    """
     def __init__(self):
         self.queue = []
 
@@ -120,14 +126,26 @@ class PriorityQueue(object):
 
     # for checking if the queue is empty
     def isEmpty(self):
+        """
+        @return: True if the queue is empty
+        """
         return len(self.queue) == 0
 
     # for inserting an element in the queue
     def append(self, node, rank):
+        """
+        @param node: element that will be added to the queue
+        @param rank: rank of the element in the queue
+        """
         self.queue.append([rank, node])
 
     # for popping an element based on Priority
     def pop(self):
+        """
+        remove the first element of the queue in term of rank and return it.
+        @return: the removed element
+        """
+
         try:
             max_val_i = 0
 
@@ -142,7 +160,11 @@ class PriorityQueue(object):
 
 
 class Node:
-    def __init__(self, img, pos):
+    """
+    Class implementing a node of the environment. Each node symbolize an action (a zoom in the image).
+    """
+
+    def __init__(self, img, pos, model_res=200):
         x, y = pos
         self.img = img
         self.resized_img = cv2.resize(img, (AGENT_RES, AGENT_RES)) / 255.
@@ -151,20 +173,38 @@ class Node:
         self.proba = None
         self.Q = None
         self.nb_children = 0
+        self.model_res = model_res
 
     def get_state(self):
+        """
+        Return an image as a state that can be used by the agent.
+        @return: an image.
+        """
         return np.array(self.resized_img.squeeze())
 
     def get_model_x(self):
-        return cv2.resize(self.img, (MODEL_RES, MODEL_RES))
+        """
+        Return the sub-image of the node resized in the model resolution.
+        @return: an image resized.
+        """
+        return cv2.resize(self.img, (self.model_res, self.model_res))
 
     def image_limit_attain(self):
-        return self.img.shape[0] / 2 <= LIMIT_RES
+        """
+        @return: True if the minimal zoom is attained.
+        """
+        return self.img.shape[0] / 2 <= self.model_res
 
     def has_proba(self):
+        """
+        if the node has already probability assigned to it.
+        """
         return self.proba is not None
 
     def get_next_action(self):
+        """
+        By respect of the Q predicted by the agent. give the next action.
+        """
         A = np.argmax(self.proba)
         Q = self.proba[A]
         self.proba[A] = -1000.
@@ -172,12 +212,23 @@ class Node:
         return A, Q
 
     def is_visited(self):
+        """
+        If the node is completely visited.
+        """
         return np.all(self.proba <= -1000.)
 
     def is_not_padding(self):
+        """
+        if the node is not in the padding area.
+        """
         return not np.all(self.resized_img == 0)
 
     def get_child(self, action):
+        """
+        compute a new node given the action taken by the agent (in which subpart of the image the agent will zoom).
+        @param action: which action to take.
+        @return: the new node.
+        """
 
         window = int(self.img.shape[0] / 2)
 
@@ -197,41 +248,35 @@ class Node:
         x_ = self.x + (i * window)
         y_ = self.y + (j * window)
 
-        return Node(self.img[window * j:window + window * j, window * i: window + window * i], (x_, y_))
+        return Node(self.img[window * j:window + window * j, window * i: window + window * i],
+                    (x_, y_), model_res=self.model_res)
 
 
 class Environment:
     """
-    this class implement a problem where the agent must mark the place where he have found boat.
-    He must not mark place where there is house.
+    this class implement a environment using high resolution image. The agent must find object of
+    interest inside the image.
     """
 
-    def __init__(self, agent, model, max_action_allowed=70, one_shot=False):
+    def __init__(self, agent, model, max_action_allowed=70, model_res=200):
         self.hist_img = None
         self.max_action_allowed = max_action_allowed
-        self.collection_V = None
-        self.collection = None
         self.history = None
-        self.nb_zoom_max = None
-        self.min_res = None
         self.min_zoom_action = None
         self.objects_coordinates = None
-        self.nb_max_conv_action = None
         self.full_img = None
         self.dim = None
         self.pq = None
         self.current_node = None
-        self.conventional_policy_nb_step = None
         self.nb_actions_taken = 0
         self.agent = agent
         self.model = model
-        self.one_shot = one_shot
+        self.model_res = model_res
 
     def reload_env(self, img):
         """
-        allow th agent to keep the environment configuration and boat placement but reload all the history and
-        value to the starting point.
-        :return: the current state of the environment.
+        reload a new environment given an image file.
+        @param img: path to the image file.
         """
         self.prepare_img(img)
         self.hist_img = self.full_img.copy()
@@ -240,11 +285,14 @@ class Environment:
         self.nb_actions_taken = 0
         self.min_zoom_action = 0
         self.history = []
-        self.collection = []
-        self.collection_V = []
-        self.current_node = Node(self.full_img, (0, 0))
+        self.current_node = Node(self.full_img, (0, 0), model_res=self.model_res)
 
     def prepare_img(self, img):
+        """
+        prepare the environment with a new image.
+        @param img: the path to the image used as the environment.
+        """
+
         self.full_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         H, W, channels = self.full_img.shape
         # check which dimention is the bigger
@@ -255,13 +303,12 @@ class Environment:
 
         self.full_img = cv2.copyMakeBorder(self.full_img, 0, max_ - H, 0,
                                            max_ - W, cv2.BORDER_CONSTANT, None, value=0)
-
         self.dim = max_
-        self.min_res = self.dim
-        self.nb_zoom_max = 0
 
     def next_step(self):
-
+        """
+        Find the next zone to explore using the agent predictions.
+        """
         self.nb_actions_taken += 1
         is_terminal = False
         model_prediction = None
@@ -311,6 +358,9 @@ class Environment:
         return is_terminal, model_prediction
 
     def get_history_img(self, history):
+        """
+        Return an image of the trajectory.
+        """
         ratio = 255. / self.dim
         hist_img = cv2.resize(self.full_img, (255, 255))
         heat_map = np.full((255, 255), 0.)
@@ -336,8 +386,10 @@ class Environment:
 
 
 class RTS:
-
-    def __init__(self, model=None, agent_weights_file="weights_rts.pt", max_action_allowed=100):
+    """
+    Wrapper of the agent and environment together. Simplify the usage.
+    """
+    def __init__(self, model=None, agent_weights_file="weights_rts.pt", max_action_allowed=100, model_res=200):
 
         file_dir = os.path.dirname(os.path.abspath(__file__))
         rts_dir = os.path.join(file_dir, 'weights', agent_weights_file)
@@ -345,7 +397,7 @@ class RTS:
         self.agent = Agent()
         self.agent.load(rts_dir)
         self.model = model
-        self.env = Environment(self.agent, self.model, max_action_allowed=max_action_allowed)
+        self.env = Environment(self.agent, self.model, max_action_allowed=max_action_allowed, model_res=model_res)
 
     def __call__(self, X):
         self.env.reload_env(X)
@@ -364,10 +416,16 @@ class RTS:
         return predictions
 
     def get_trajectory(self):
+        """
+        Return the trajectory has an image.
+        """
         return cv2.cvtColor(self.env.get_history_img(self.env.history), cv2.COLOR_RGB2BGR)
 
 
 if __name__ == "__main__":
+    # ------------------------------------------------------------------------------------------------------------------
+    # TEST WITH YOLO WRAPPER
+    # ------------------------------------------------------------------------------------------------------------------
     parser = argparse.ArgumentParser(
         description='This program allow user to use RTS bounded with YOLO v5n to search on a image')
     parser.add_argument('-img', '--image_path',
@@ -387,7 +445,8 @@ if __name__ == "__main__":
     yolo_dir = os.path.join(file_dir, 'weights', args.yolo_weights)
     model = torch.hub.load('ultralytics/yolov5', 'custom', path=yolo_dir, force_reload=True)
     model = YoloWrapper(model=model, return_img=True)
-    rts = RTS(model, agent_weights_file=args.rts_weights, max_action_allowed=int(args.max_actions_allowed))
+    rts = RTS(model, agent_weights_file=args.rts_weights, max_action_allowed=int(args.max_actions_allowed),
+              model_res=640)
     start = time.time()
     preds = rts(img)
     done = time.time()
@@ -395,7 +454,6 @@ if __name__ == "__main__":
     print("Image computed in {0} secondes".format(elapsed))
 
     print(preds)
-
 
     cv2.imwrite("result.jpg", cv2.cvtColor(rts.env.hist_img, cv2.COLOR_RGB2BGR))
     cv2.imwrite("trajectory.jpg", cv2.cvtColor(rts.env.get_history_img(rts.env.history), cv2.COLOR_RGB2BGR))

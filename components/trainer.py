@@ -1,17 +1,18 @@
 import os
 import random
-
 import numpy as np
 from tqdm import tqdm
-
 from components.agent import PolicyGradient
 from components.dummy_agent import DummyAgent
 from components.environment import Environment
-import environment
 from components.plot import MetricMonitor, metrics_to_pdf, metrics_eval_to_pdf
 
 
 def describe(arr):
+    """
+    show several metrics from a given array.
+    @param arr: array to plot the metrics from.
+    """
     print("Measures of Central Tendency")
     print("Mean =", np.mean(arr))
     print("Median =", np.median(arr))
@@ -23,18 +24,30 @@ def describe(arr):
 
 
 class Trainer:
+    """
+    This class act has a middle ground between the environment ant the agent. It use the unload the agent to the task
+    of keeping tracks of the metrics.
+    """
     def __init__(self, epsilon, learning_rate, gamma, lr_gamma, min_res):
         self.label_path = None
         self.img_path = None
         self.label_list = None
         self.img_list = None
-        environment.TASK_MODEL_RES = min_res
-        self.env = Environment(epsilon=epsilon)
+        self.env = Environment(epsilon=epsilon, res_min=min_res)
         self.agent = PolicyGradient(self.env, learning_rate=learning_rate, gamma=gamma, lr_gamma=lr_gamma)
         self.dummy = DummyAgent(self.env)
 
     def train(self, nb_episodes, train_path, result_path='.',
               real_time_monitor=False, plot_metric=False, transfer_learning=False):
+        """
+        Allow user to train RTS.
+        @param nb_episodes: number of episode needed to train the agent.
+        @param train_path: path where the training data is.
+        @param result_path: path where the runs will be saved.
+        @param real_time_monitor: if True, run a server showing realtime progression of the training.
+        @param plot_metric: if True return also metric in .pdf format in the runs folder.
+        @param transfer_learning: use already existing weights.
+        """
 
         # --------------------------------------------------------------------------------------------------------------
         # LEARNING PREPARATION
@@ -42,8 +55,9 @@ class Trainer:
         if transfer_learning:
             self.agent.load(transfer_learning)
 
-        self.agent.model_summary()
+        self.agent.model_summary() # show the QNet summary.
 
+        # create the monitor server.
         if real_time_monitor:
             print("[INFO] Real time monitor server running on localhost.")
             metric_monitor = MetricMonitor()
@@ -86,7 +100,7 @@ class Trainer:
                 nb_min_zoom_action.append(self.env.min_zoom_action)
 
                 if real_time_monitor:
-                    metric_monitor.update_values(st, sum_reward, loss , st)
+                    metric_monitor.update_values(sum_reward, loss, st)
 
                 episode.set_postfix(loss=loss, nb_action=st)
 
@@ -128,6 +142,12 @@ class Trainer:
                            path_plot, "training")
 
     def evaluate(self, eval_path, result_path='.', plot_metric=False):
+        """
+        Evaluate RTS on the testing set.
+        @param eval_path: path where the testing data is kept.
+        @param result_path: path where the runs will be saved.
+        @param plot_metric: if True return also metric in .pdf format in the runs folder.
+        """
 
         self.img_path = os.path.join(eval_path, "img")
         self.label_path = os.path.join(eval_path, "bboxes")
