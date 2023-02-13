@@ -446,7 +446,7 @@ if __name__ == "__main__":
     model = torch.hub.load('ultralytics/yolov5', 'custom', path=yolo_dir, force_reload=True)
     model = YoloWrapper(model=model, return_img=True)
     rts = RTS(model, agent_weights_file=args.rts_weights, max_action_allowed=int(args.max_actions_allowed),
-              model_res=640)
+              model_res=200)
     start = time.time()
     preds = rts(img)
     done = time.time()

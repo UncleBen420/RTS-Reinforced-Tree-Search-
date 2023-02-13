@@ -37,8 +37,6 @@ if __name__ == '__main__':
                   plot_metric=args.plot_metric,
                   transfer_learning=args.transfer_learning)
 
-    trainer.agent.load("rts_runs/training/weights/weights_rts.pt")
-
     print("[INFO Evaluation started")
     trainer.evaluate(args.eval_path,
                      args.results_path,
